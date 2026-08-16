@@ -1,4 +1,4 @@
-"""Stream metrics and statistics tracking module."""
+"""Stream metrics and statistics tracking module using monotonic timing."""
 
 from collections import deque
 from dataclasses import dataclass
@@ -28,6 +28,7 @@ class StreamStats:
     resolution_height: int = 0
     bitrate_kbps: float = 0.0
     estimated_latency_ms: float = 0.0
+    latency_is_simulated: bool = False
     uptime_seconds: float = 0.0
     reconnect_count: int = 0
     error_message: str = ""
@@ -40,17 +41,24 @@ class StreamStats:
 
     @property
     def fps_str(self) -> str:
-        return f"{self.displayed_fps:.0f} FPS"
+        if self.displayed_fps > 0:
+            return f"{self.displayed_fps:.0f} FPS"
+        return "-- FPS"
 
     @property
     def latency_str(self) -> str:
         if self.estimated_latency_ms > 0:
+            if self.latency_is_simulated:
+                return f"~{self.estimated_latency_ms:.0f} ms (SIM)"
             return f"~{self.estimated_latency_ms:.0f} ms"
-        return "-- ms"
+        return "LATENCY: UNMEASURED"
 
 
 class StreamStatisticsTracker:
-    """Thread-safe sliding-window tracker for stream throughput, latency, and health."""
+    """Thread-safe sliding-window tracker for stream throughput, latency, and health.
+    
+    Uses time.monotonic() exclusively for jitter-free FPS and duration calculations.
+    """
 
     def __init__(self, window_duration_seconds: float = 1.0):
         self._window_duration = window_duration_seconds
@@ -66,6 +74,7 @@ class StreamStatisticsTracker:
         self._res_w: int = 0
         self._res_h: int = 0
         self._latest_latency_ms: float = 0.0
+        self._latency_is_simulated: bool = False
         self._session_start_time: Optional[float] = None
         self._error_message: str = ""
 
@@ -73,8 +82,9 @@ class StreamStatisticsTracker:
         with self._lock:
             self._state = state
             self._error_message = error_msg
+            now = time.monotonic()
             if state == StreamState.LIVE and self._session_start_time is None:
-                self._session_start_time = time.time()
+                self._session_start_time = now
             elif state in (StreamState.DISCONNECTED, StreamState.ERROR):
                 self._session_start_time = None
 
@@ -88,8 +98,9 @@ class StreamStatisticsTracker:
         height: int,
         byte_size: int = 0,
         latency_ms: float = 0.0,
+        is_simulated_latency: bool = False,
     ) -> None:
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._received_timestamps.append(now)
             if byte_size > 0:
@@ -98,10 +109,11 @@ class StreamStatisticsTracker:
             self._res_h = height
             if latency_ms > 0:
                 self._latest_latency_ms = latency_ms
+                self._latency_is_simulated = is_simulated_latency
             self._prune(now)
 
     def record_frame_displayed(self) -> None:
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._displayed_timestamps.append(now)
             self._prune(now)
@@ -120,7 +132,7 @@ class StreamStatisticsTracker:
             self._byte_samples.popleft()
 
     def get_stats(self) -> StreamStats:
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._prune(now)
             
@@ -143,6 +155,7 @@ class StreamStatisticsTracker:
                 resolution_height=self._res_h,
                 bitrate_kbps=bitrate_kbps,
                 estimated_latency_ms=self._latest_latency_ms,
+                latency_is_simulated=self._latency_is_simulated,
                 uptime_seconds=uptime,
                 reconnect_count=self._reconnect_count,
                 error_message=self._error_message,
@@ -158,6 +171,7 @@ class StreamStatisticsTracker:
             self._res_w = 0
             self._res_h = 0
             self._latest_latency_ms = 0.0
+            self._latency_is_simulated = False
             self._session_start_time = None
             self._error_message = ""
             self._state = StreamState.DISCONNECTED

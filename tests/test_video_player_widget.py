@@ -45,7 +45,7 @@ def test_video_player_handle_stats(qapp):
 
     player.handle_stats(stats)
     assert player.fps_label.text() == "30 FPS"
-    assert player.latency_label.text() == "~18 ms"
+    assert "~18 ms" in player.latency_label.text()
     assert "1280×720 HD" in player.resolution_label.text()
 
 

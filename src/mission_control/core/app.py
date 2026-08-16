@@ -9,7 +9,8 @@ from mission_control.core.logger import setup_logger, get_logger
 from mission_control.comms.base_client import BaseCommsClient
 from mission_control.comms.mock_client import MockCommsClient
 from mission_control.comms.ros2.client import ROS2CommsClient, is_ros2_available
-from mission_control.video import VideoWorker, TestPatternVideoSource, OpenCVVideoSource
+from mission_control.video.worker import VideoWorker
+from mission_control.video.source import TestPatternVideoSource, OpenCVVideoSource
 from mission_control.ui.main_window import MainWindow
 from mission_control.ui.styles import load_stylesheet
 

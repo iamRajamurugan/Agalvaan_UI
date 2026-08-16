@@ -14,8 +14,8 @@ def test_stream_stats_defaults():
     assert stats.displayed_fps == 0.0
     assert stats.dropped_frames == 0
     assert stats.resolution_str == "--×--"
-    assert stats.fps_str == "0 FPS"
-    assert stats.latency_str == "-- ms"
+    assert stats.fps_str == "-- FPS"
+    assert stats.latency_str == "LATENCY: UNMEASURED"
 
 
 def test_stream_statistics_tracker():

@@ -20,7 +20,7 @@ from mission_control.core.logger import get_logger
 from mission_control.comms.base_client import BaseCommsClient
 from mission_control.telemetry.state import ConnectionState, MissionMode
 from mission_control.ui.components.status_card import StatusCard
-from mission_control.video import LiveVideoPlayerWidget
+from mission_control.video.player_widget import LiveVideoPlayerWidget
 
 logger = get_logger("ui.main_window")
 

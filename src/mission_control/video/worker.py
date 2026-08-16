@@ -85,9 +85,9 @@ class VideoWorker(QThread):
                 self.state_changed.emit(StreamState.ERROR)
                 self.error_occurred.emit(error_msg)
 
-                # Sleep with interruption check
-                sleep_start = time.time()
-                while time.time() - sleep_start < backoff:
+                # Sleep with monotonic interruption check
+                sleep_start = time.monotonic()
+                while time.monotonic() - sleep_start < backoff:
                     if not self._is_running or self.isInterruptionRequested():
                         return
                     time.sleep(0.1)
@@ -102,6 +102,7 @@ class VideoWorker(QThread):
             logger.info("VideoWorker: Stream connected and LIVE.")
 
             consecutive_failures = 0
+            self._last_stats_emit_time = time.monotonic()
 
             # 2. Continuous Ingestion Loop
             while self._is_running and not self.isInterruptionRequested():
@@ -145,16 +146,17 @@ class VideoWorker(QThread):
                         height=height,
                         byte_size=byte_size,
                         latency_ms=metadata.estimated_latency_ms,
+                        is_simulated_latency=(metadata.source_type == "test_pattern"),
                     )
 
                     # Emit frame to UI
                     self.stats_tracker.record_frame_displayed()
                     self.frame_ready.emit(qimage, metadata)
 
-                    # Periodic stats emission
-                    now = time.time()
-                    if now - self._last_stats_emit_time >= self._stats_emit_interval:
-                        self._last_stats_emit_time = now
+                    # Periodic stats emission using monotonic clock
+                    now_mono = time.monotonic()
+                    if now_mono - self._last_stats_emit_time >= self._stats_emit_interval:
+                        self._last_stats_emit_time = now_mono
                         stats = self.stats_tracker.get_stats()
                         self.stats_updated.emit(stats)
 
@@ -164,7 +166,11 @@ class VideoWorker(QThread):
                     break
 
             # Close source before reconnect attempt
-            self.video_source.close()
+            try:
+                self.video_source.close()
+            except Exception as e:
+                logger.warning(f"Error closing video source on reconnect: {e}")
+
             if self._is_running and not self.isInterruptionRequested():
                 self.stats_tracker.record_reconnect_attempt()
                 time.sleep(1.0)

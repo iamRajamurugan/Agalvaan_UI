@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 import math
+import os
 import time
 from typing import Optional, Tuple, Union
 import cv2
@@ -67,8 +68,8 @@ class TestPatternVideoSource(BaseVideoSource):
     def open(self) -> bool:
         self._is_open = True
         self._frame_count = 0
-        self._start_time = time.time()
-        self._last_frame_time = time.time()
+        self._start_time = time.monotonic()
+        self._last_frame_time = time.monotonic()
         logger.info(
             f"TestPatternVideoSource opened: {self.width}x{self.height} @ {self.target_fps} FPS."
         )
@@ -85,15 +86,16 @@ class TestPatternVideoSource(BaseVideoSource):
         if not self._is_open:
             return None
 
-        # Rate limiter to maintain target FPS
-        now = time.time()
-        elapsed_since_last = now - self._last_frame_time
+        # Rate limiter using monotonic clock
+        now_mono = time.monotonic()
+        elapsed_since_last = now_mono - self._last_frame_time
         sleep_time = self.frame_interval - elapsed_since_last
         if sleep_time > 0.001:
             time.sleep(sleep_time)
 
-        self._last_frame_time = time.time()
+        self._last_frame_time = time.monotonic()
         self._frame_count += 1
+        wall_time = time.time()
 
         # 1. Create dark canvas with grid background
         frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
@@ -148,7 +150,7 @@ class TestPatternVideoSource(BaseVideoSource):
             cv2.LINE_AA,
         )
 
-        time_str = time.strftime("%H:%M:%S", time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
+        time_str = time.strftime("%H:%M:%S", time.localtime(wall_time)) + f".{int((wall_time % 1) * 1000):03d}"
         cv2.putText(
             frame,
             f"FRAME: {self._frame_count:06d}  |  TIME: {time_str}  |  RES: {self.width}x{self.height}",
@@ -160,12 +162,12 @@ class TestPatternVideoSource(BaseVideoSource):
             cv2.LINE_AA,
         )
 
-        # Simulated jitter latency
+        # Simulated jitter latency (clearly tagged as simulated)
         sim_latency = self.simulated_latency_base_ms + 4.0 * math.sin(self._frame_count * 0.1)
 
         metadata = FrameMetadata(
             frame_index=self._frame_count,
-            timestamp_captured=now,
+            timestamp_captured=now_mono,
             resolution_width=self.width,
             resolution_height=self.height,
             source_type="test_pattern",
@@ -178,8 +180,9 @@ class TestPatternVideoSource(BaseVideoSource):
 class OpenCVVideoSource(BaseVideoSource):
     """Captures frames from RTSP streams, local webcams, or video files via OpenCV."""
 
-    def __init__(self, source_uri: Union[str, int] = 0):
+    def __init__(self, source_uri: Union[str, int] = 0, rtsp_transport: str = "udp"):
         self.source_uri = source_uri
+        self.rtsp_transport = rtsp_transport
         self._cap: Optional[cv2.VideoCapture] = None
         self._frame_count = 0
 
@@ -187,7 +190,10 @@ class OpenCVVideoSource(BaseVideoSource):
         logger.info(f"Opening OpenCV video source: {self.source_uri}...")
         try:
             if isinstance(self.source_uri, str) and self.source_uri.startswith("rtsp://"):
-                # Configure low latency FFMPEG flags for RTSP
+                # Configure low-latency FFMPEG environment options on Windows
+                os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                    f"rtsp_transport;{self.rtsp_transport}|fflags;nobuffer|max_delay;0|flags;low_delay"
+                )
                 self._cap = cv2.VideoCapture(self.source_uri, cv2.CAP_FFMPEG)
                 self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             else:
@@ -221,16 +227,16 @@ class OpenCVVideoSource(BaseVideoSource):
             return None
 
         self._frame_count += 1
-        now = time.time()
+        now_mono = time.monotonic()
         h, w = frame.shape[:2]
 
         metadata = FrameMetadata(
             frame_index=self._frame_count,
-            timestamp_captured=now,
+            timestamp_captured=now_mono,
             resolution_width=w,
             resolution_height=h,
             source_type=str(self.source_uri),
-            estimated_latency_ms=0.0,
+            estimated_latency_ms=0.0,  # 0.0 indicates unmeasured on real network stream
         )
 
         return frame, metadata
