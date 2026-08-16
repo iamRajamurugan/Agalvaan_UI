@@ -1,0 +1,39 @@
+# Rover Hardware & Network Configuration
+rover:
+  name: "Lunabotics Rover"
+  computer: "NVIDIA Jetson Orin Nano"
+  os: "Ubuntu 22.04 LTS"
+  ros_distro: "Humble"
+  ros_domain_id: 0
+
+network:
+  rover_ip: "192.168.1.100"
+  mission_control_ip: "192.168.1.50"
+  heartbeat_port: 8765
+  video_rtsp_port: 8554
+
+ros_topics:
+  cmd_vel: "/cmd_vel"
+  heartbeat: "/rover/heartbeat"
+  imu: "/imu/data"
+  odometry: "/odom"
+  joint_states: "/joint_states"
+  lidar_front: "/lidar_front/scan"
+  lidar_rear: "/lidar_rear/scan"
+  lidar_left: "/lidar_left/scan"
+  lidar_right: "/lidar_right/scan"
+  camera_image: "/camera/image_raw"
+  camera_compressed: "/camera/image_raw/compressed"
+  mission_state: "/mission/state"
+  diagnostics: "/diagnostics"
+  estop: "/safety/estop"
+
+sensors:
+  lidar_count: 4
+  camera:
+    mount: "front"
+    aspect_ratio: "16:9"
+    target_fps: 30
+    resolution:
+      width: 1280
+      height: 720

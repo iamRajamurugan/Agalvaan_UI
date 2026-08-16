@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rover-mission-control"
+version = "0.1.0"
+description = "Mission Control application for Lunabotics-style planetary rover"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Rover Mission Control Team" }
+]
+dependencies = [
+    "PySide6>=6.5.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+mission-control = "mission_control.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v"

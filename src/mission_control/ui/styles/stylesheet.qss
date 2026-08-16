@@ -1,0 +1,207 @@
+/* ==========================================================================
+   ROVER MISSION CONTROL — MASTER STYLESHEET (Dark Competition Palette)
+   ========================================================================== */
+
+/* Global Window & Base */
+QMainWindow, QWidget#CentralWidget {
+    background-color: #0f1218;
+    color: #f1f5f9;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", "Helvetica Neue", sans-serif;
+    font-size: 13px;
+}
+
+/* Header Container */
+QWidget#HeaderBar {
+    background-color: #161b24;
+    border-bottom: 1px solid #232a38;
+    padding: 8px 16px;
+}
+
+QLabel#AppTitle {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    color: #f8fafc;
+}
+
+QLabel#AppSubtitle {
+    font-size: 11px;
+    font-weight: 600;
+    color: #38bdf8;
+    letter-spacing: 0.8px;
+}
+
+/* Card / Panel Base */
+QFrame.StatusCard {
+    background-color: #171c26;
+    border: 1px solid #232b3b;
+    border-radius: 6px;
+}
+
+QFrame.StatusCard:hover {
+    border-color: #334155;
+}
+
+QLabel#CardHeader {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    color: #94a3b8;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #1e2636;
+}
+
+QLabel#CardValue {
+    font-size: 14px;
+    font-weight: 600;
+    color: #f1f5f9;
+}
+
+QLabel#CardSubtext {
+    font-size: 11px;
+    color: #64748b;
+}
+
+/* Placeholder Frames (Video & Map) */
+QFrame#VideoPlaceholder {
+    background-color: #0a0d13;
+    border: 1px dashed #232b3b;
+    border-radius: 6px;
+}
+
+QFrame#MapPlaceholder {
+    background-color: #0a0d13;
+    border: 1px dashed #232b3b;
+    border-radius: 6px;
+}
+
+QLabel#PlaceholderTitle {
+    font-size: 15px;
+    font-weight: 600;
+    color: #64748b;
+    letter-spacing: 0.5px;
+}
+
+QLabel#PlaceholderSubtitle {
+    font-size: 12px;
+    color: #475569;
+}
+
+/* Badges & Indicators */
+QLabel.Badge {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+QLabel.BadgeDisconnected {
+    background-color: #2b171a;
+    color: #f87171;
+    border: 1px solid #7f1d1d;
+}
+
+QLabel.BadgeMock {
+    background-color: #1e2638;
+    color: #38bdf8;
+    border: 1px solid #0369a1;
+}
+
+QLabel.BadgeConnected {
+    background-color: #122822;
+    color: #34d399;
+    border: 1px solid #065f46;
+}
+
+QLabel.BadgeWarning {
+    background-color: #2b2212;
+    color: #fbbf24;
+    border: 1px solid #78350f;
+}
+
+/* Push Buttons */
+QPushButton {
+    background-color: #1e2636;
+    color: #f1f5f9;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+QPushButton:hover {
+    background-color: #283348;
+    border-color: #475569;
+}
+
+QPushButton:pressed {
+    background-color: #161c28;
+}
+
+QPushButton:disabled {
+    background-color: #131720;
+    color: #475569;
+    border-color: #1e2636;
+}
+
+/* Primary Action Button */
+QPushButton#PrimaryButton {
+    background-color: #0284c7;
+    border-color: #0369a1;
+    color: #ffffff;
+}
+
+QPushButton#PrimaryButton:hover {
+    background-color: #0369a1;
+}
+
+/* Emergency Stop Button Placeholder */
+QPushButton#EStopButton {
+    background-color: #dc2626;
+    border: 1px solid #b91c1c;
+    color: #ffffff;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 8px 18px;
+    border-radius: 4px;
+}
+
+QPushButton#EStopButton:hover {
+    background-color: #b91c1c;
+}
+
+QPushButton#EStopButton:pressed {
+    background-color: #991b1b;
+}
+
+/* Monospace Values for Timers and Diagnostics */
+QLabel.MonoStat {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 16px;
+    font-weight: 700;
+    color: #38bdf8;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #0f1218;
+    width: 8px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: #232b3b;
+    min-height: 20px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #334155;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}

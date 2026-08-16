@@ -1,0 +1,21 @@
+# Application Configuration
+app:
+  name: "Rover Mission Control"
+  version: "0.1.0"
+  mock_mode: true
+  log_level: "INFO"
+
+ui:
+  window_title: "Rover Mission Control — Competition Operator Interface"
+  default_width: 1440
+  default_height: 900
+  min_width: 1100
+  min_height: 700
+  theme: "dark"
+  fps_limit: 30
+
+mission:
+  competition_name: "Lunabotics Competition"
+  run_duration_seconds: 1800  # 30 minutes official competition run duration
+  teleoperation_timeout_ms: 500  # Dead-man's switch threshold
+  heartbeat_timeout_ms: 1000     # Watchdog timeout for rover disconnection
