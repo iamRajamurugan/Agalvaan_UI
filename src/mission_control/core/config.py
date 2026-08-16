@@ -58,6 +58,26 @@ class ROSTopicsConfig:
 
 
 @dataclass
+class ResolutionConfig:
+    width: int = 1280
+    height: int = 720
+
+
+@dataclass
+class CameraSensorConfig:
+    mount: str = "front"
+    aspect_ratio: str = "16:9"
+    target_fps: int = 30
+    resolution: ResolutionConfig = field(default_factory=ResolutionConfig)
+
+
+@dataclass
+class SensorsConfig:
+    lidar_count: int = 4
+    camera: CameraSensorConfig = field(default_factory=CameraSensorConfig)
+
+
+@dataclass
 class RoverConfig:
     name: str = "Lunabotics Rover"
     computer: str = "NVIDIA Jetson Orin Nano"
@@ -67,6 +87,7 @@ class RoverConfig:
     rover_ip: str = "192.168.1.100"
     mission_control_ip: str = "192.168.1.50"
     topics: ROSTopicsConfig = field(default_factory=ROSTopicsConfig)
+    sensors: SensorsConfig = field(default_factory=SensorsConfig)
 
 
 def load_yaml_file(path: Path) -> Dict[str, Any]:
@@ -152,6 +173,25 @@ def load_rover_config(config_dir: Optional[Path] = None) -> RoverConfig:
         estop=topics_section.get("estop", "/safety/estop"),
     )
 
+    sensors_section = data.get("sensors", {})
+    camera_data = sensors_section.get("camera", {})
+    res_data = camera_data.get("resolution", {})
+
+    camera_config = CameraSensorConfig(
+        mount=camera_data.get("mount", "front"),
+        aspect_ratio=camera_data.get("aspect_ratio", "16:9"),
+        target_fps=camera_data.get("target_fps", 30),
+        resolution=ResolutionConfig(
+            width=res_data.get("width", 1280),
+            height=res_data.get("height", 720),
+        ),
+    )
+
+    sensors_config = SensorsConfig(
+        lidar_count=sensors_section.get("lidar_count", 4),
+        camera=camera_config,
+    )
+
     return RoverConfig(
         name=rover_section.get("name", "Lunabotics Rover"),
         computer=rover_section.get("computer", "NVIDIA Jetson Orin Nano"),
@@ -161,6 +201,7 @@ def load_rover_config(config_dir: Optional[Path] = None) -> RoverConfig:
         rover_ip=network_section.get("rover_ip", "192.168.1.100"),
         mission_control_ip=network_section.get("mission_control_ip", "192.168.1.50"),
         topics=topics_config,
+        sensors=sensors_config,
     )
 
 

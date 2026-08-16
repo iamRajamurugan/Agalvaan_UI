@@ -20,6 +20,7 @@ from mission_control.core.logger import get_logger
 from mission_control.comms.base_client import BaseCommsClient
 from mission_control.telemetry.state import ConnectionState, MissionMode
 from mission_control.ui.components.status_card import StatusCard
+from mission_control.video import LiveVideoPlayerWidget
 
 logger = get_logger("ui.main_window")
 
@@ -164,26 +165,9 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
 
-        # 1. Camera Video Player Placeholder (16:9 Target)
-        video_frame = QFrame()
-        video_frame.setObjectName("VideoPlaceholder")
-        video_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        video_layout = QVBoxLayout(video_frame)
-        video_layout.setAlignment(Qt.AlignCenter)
-        video_layout.setSpacing(8)
-
-        vid_title = QLabel("LIVE FRONT CAMERA STREAM")
-        vid_title.setObjectName("PlaceholderTitle")
-        vid_status = QLabel("NO VIDEO")
-        vid_status.setProperty("class", "Badge BadgeDisconnected")
-        vid_status.setAlignment(Qt.AlignCenter)
-        vid_desc = QLabel("16:9 Low-Latency Player • Hardware Decoder [Pending Setup]")
-        vid_desc.setObjectName("PlaceholderSubtitle")
-
-        video_layout.addWidget(vid_title, alignment=Qt.AlignCenter)
-        video_layout.addWidget(vid_status, alignment=Qt.AlignCenter)
-        video_layout.addWidget(vid_desc, alignment=Qt.AlignCenter)
-        splitter.addWidget(video_frame)
+        # 1. Live Camera Video Player (16:9 Aspect Ratio Locked)
+        self.video_player = LiveVideoPlayerWidget(self)
+        splitter.addWidget(self.video_player)
 
         # 2. Environment & LiDAR Map Placeholder
         map_frame = QFrame()
