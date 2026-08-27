@@ -6,6 +6,7 @@ from mission_control.telemetry.state import (
     StateManager,
     ConnectionState,
     MissionMode,
+    MissionPhase,
     IMUData,
     BatteryData,
 )
@@ -42,6 +43,25 @@ def test_state_manager_snapshots():
     # Ensure previous snapshot is unaffected
     assert snap1.connection_state == ConnectionState.DISCONNECTED
     assert snap1.is_estopped is False
+
+
+def test_state_manager_tracks_mission_phase():
+    """Mission phase is application state, readable through ordinary snapshots."""
+    manager = StateManager()
+    assert manager.get_snapshot().mission_phase == MissionPhase.PRE_CHECK
+
+    manager.set_mission_phase(MissionPhase.AUTONOMOUS)
+    assert manager.get_snapshot().mission_phase == MissionPhase.AUTONOMOUS
+
+
+def test_telemetry_packets_do_not_overwrite_mission_phase():
+    """An inbound packet carries sensor data only; it must not reset the timeline."""
+    manager = StateManager()
+    manager.set_mission_phase(MissionPhase.DUMP)
+
+    manager.apply_telemetry(RoverState(mission_phase=MissionPhase.PRE_CHECK))
+
+    assert manager.get_snapshot().mission_phase == MissionPhase.DUMP
 
 
 def test_state_manager_heartbeat():

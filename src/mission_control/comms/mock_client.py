@@ -6,35 +6,55 @@ from PySide6.QtCore import QObject, QTimer
 
 from mission_control.comms.base_client import BaseCommsClient
 from mission_control.core.logger import get_logger
+from mission_control.telemetry.mock_generator import MockTelemetryGenerator
 from mission_control.telemetry.state import ConnectionState, RoverState, MissionMode
 
 logger = get_logger("mock_client")
+
+DEFAULT_TELEMETRY_INTERVAL_MS = 50  # 20 Hz mock publish rate
 
 
 class MockCommsClient(BaseCommsClient):
     """Mock client providing deterministic state and heartbeat updates for UI development
     without requiring a physical rover, Jetson, or ROS 2 network.
+
+    Telemetry values come from MockTelemetryGenerator and are MOCK DATA — they are not
+    measurements and do not represent any real rover subsystem.
     """
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(
+        self,
+        parent: Optional[QObject] = None,
+        telemetry_interval_ms: int = DEFAULT_TELEMETRY_INTERVAL_MS,
+        generator: Optional[MockTelemetryGenerator] = None,
+    ):
         super().__init__(parent)
         self._heartbeat_timer: Optional[QTimer] = None
+        self._telemetry_timer: Optional[QTimer] = None
         self._state = RoverState(connection_state=ConnectionState.DISCONNECTED)
         self._mock_latency_ms: float = 4.2
+        self._telemetry_interval_ms = max(1, telemetry_interval_ms)
+        self._generator = generator or MockTelemetryGenerator()
+
+    @property
+    def generator(self) -> MockTelemetryGenerator:
+        """The deterministic telemetry source backing this mock client."""
+        return self._generator
+
+    @property
+    def telemetry_interval_ms(self) -> int:
+        return self._telemetry_interval_ms
 
     def start(self) -> bool:
         """Initializes mock resources and timers."""
         logger.info("MockCommsClient started in standalone development mode.")
-        if self._heartbeat_timer is None:
-            self._heartbeat_timer = QTimer(self)
-            self._heartbeat_timer.timeout.connect(self._on_heartbeat_tick)
+        self._ensure_timers()
         return True
 
     def stop(self) -> None:
         """Stops mock timers and clears active session."""
         logger.info("MockCommsClient stopping...")
-        if self._heartbeat_timer and self._heartbeat_timer.isActive():
-            self._heartbeat_timer.stop()
+        self._stop_timers()
         self._is_connected = False
         self._connection_state = ConnectionState.DISCONNECTED
         self.connection_state_changed.emit(self._connection_state.value)
@@ -45,15 +65,16 @@ class MockCommsClient(BaseCommsClient):
         self._connection_state = ConnectionState.MOCK_MODE
         self._state.connection_state = ConnectionState.MOCK_MODE
         logger.info("MockCommsClient: Connected (MOCK MODE).")
-        
+
         self.connection_state_changed.emit(self._connection_state.value)
 
-        if self._heartbeat_timer is None:
-            self._heartbeat_timer = QTimer(self)
-            self._heartbeat_timer.timeout.connect(self._on_heartbeat_tick)
-        
+        self._ensure_timers()
+        self._generator.reset()
+
         if not self._heartbeat_timer.isActive():
             self._heartbeat_timer.start(500)  # 2 Hz heartbeat
+        if not self._telemetry_timer.isActive():
+            self._telemetry_timer.start(self._telemetry_interval_ms)
 
         return True
 
@@ -64,9 +85,7 @@ class MockCommsClient(BaseCommsClient):
         self._state.connection_state = ConnectionState.DISCONNECTED
         logger.info("MockCommsClient: Disconnected.")
 
-        if self._heartbeat_timer and self._heartbeat_timer.isActive():
-            self._heartbeat_timer.stop()
-
+        self._stop_timers()
         self.connection_state_changed.emit(self._connection_state.value)
 
     def send_drive_command(self, linear_x: float, angular_z: float) -> bool:
@@ -101,6 +120,49 @@ class MockCommsClient(BaseCommsClient):
             self.command_feedback_received.emit("mission_mode", False)
             return False
 
+    def tick_telemetry(self, dt: Optional[float] = None) -> Optional[RoverState]:
+        """Advances the mock generator by one step and emits a telemetry packet.
+
+        Called by the internal timer while connected, and directly by tests so the
+        telemetry profile can be stepped deterministically without waiting on timers.
+        Returns the emitted packet, or None if the client is not connected.
+        """
+        if not self._is_connected:
+            return None
+
+        step = dt if dt is not None else self._telemetry_interval_ms / 1000.0
+        packet = self._generator.advance(step)
+
+        # Connection and safety fields stay owned by the client, not the generator.
+        packet.connection_state = self._connection_state
+        packet.mission_mode = self._state.mission_mode
+        packet.is_estopped = self._state.is_estopped
+
+        self._mock_latency_ms = packet.heartbeat_latency_ms
+        self._state.heartbeat_latency_ms = packet.heartbeat_latency_ms
+        self._state.last_heartbeat_time = packet.last_heartbeat_time
+
+        self.telemetry_received.emit(packet)
+        return packet
+
+    def _ensure_timers(self) -> None:
+        """Creates the heartbeat and telemetry timers if they do not yet exist."""
+        if self._heartbeat_timer is None:
+            self._heartbeat_timer = QTimer(self)
+            self._heartbeat_timer.timeout.connect(self._on_heartbeat_tick)
+        if self._telemetry_timer is None:
+            self._telemetry_timer = QTimer(self)
+            self._telemetry_timer.timeout.connect(self._on_telemetry_tick)
+
+    def _stop_timers(self) -> None:
+        for timer in (self._heartbeat_timer, self._telemetry_timer):
+            if timer and timer.isActive():
+                timer.stop()
+
+    def _on_telemetry_tick(self) -> None:
+        """Timer slot producing the periodic mock telemetry packet."""
+        self.tick_telemetry()
+
     def _on_heartbeat_tick(self) -> None:
         """Simulates a periodic heartbeat packet from the rover."""
         if not self._is_connected:
@@ -108,4 +170,3 @@ class MockCommsClient(BaseCommsClient):
         self._state.last_heartbeat_time = time.time()
         self._state.heartbeat_latency_ms = self._mock_latency_ms
         self.heartbeat_received.emit(self._mock_latency_ms)
-        self.telemetry_received.emit(self._state)

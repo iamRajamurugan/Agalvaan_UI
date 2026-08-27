@@ -205,3 +205,189 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
+
+/* ==========================================================================
+   MISSION CLOCK, PHASE & DEV CONTROLS (Phase 3B)
+   ========================================================================== */
+
+QLabel#MissionClockCaption {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #7c8ba1;
+}
+
+QLabel#MissionClockCaption[severity="ERROR"] {
+    color: #f87171;
+    font-weight: 800;
+}
+
+/* Deliberately the largest text in the window: readable at a glance */
+QLabel#MissionClockValue {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: #38bdf8;
+    padding: 0px 6px;
+}
+
+QLabel#MissionClockValue[severity="WARNING"] { color: #fbbf24; }
+QLabel#MissionClockValue[severity="ERROR"]   { color: #f87171; }
+
+QLabel#MissionPhaseBadge {
+    background-color: #10243a;
+    color: #38bdf8;
+    border: 1px solid #0369a1;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+
+QLabel#MissionPhaseBadge[severity="OFFLINE"] {
+    background-color: #1b202b;
+    color: #94a3b8;
+    border-color: #334155;
+}
+
+QWidget#MissionBar {
+    background-color: #12161f;
+    border-bottom: 1px solid #232a38;
+}
+
+QLabel#MissionBarLabel {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: #7c8ba1;
+    padding-right: 4px;
+}
+
+QPushButton#PhaseButton {
+    background-color: #171d29;
+    border: 1px solid #2b3448;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: #94a3b8;
+}
+
+QPushButton#PhaseButton:hover {
+    border-color: #475569;
+    color: #e2e8f0;
+}
+
+QPushButton#PhaseButton:checked {
+    background-color: #10243a;
+    border-color: #0ea5e9;
+    color: #38bdf8;
+}
+
+QPushButton#ClockButton {
+    background-color: #1e2636;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #cbd5e1;
+}
+
+QPushButton#ClockButton:hover {
+    background-color: #283348;
+    color: #ffffff;
+}
+
+QLabel#MockControlsHint {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    color: #4b5772;
+    padding-left: 10px;
+}
+
+/* ==========================================================================
+   TELEMETRY PANEL (Phase 3A)
+   Severity is expressed through the dynamic property [severity="..."], set in
+   Python via ui.components.telemetry_primitives.apply_severity(). Severity is
+   always accompanied by explicit text, never signalled by colour alone.
+   ========================================================================== */
+
+QWidget#TelemetryPanel {
+    background-color: transparent;
+}
+
+QFrame#TelemetryCard {
+    background-color: #141924;
+    border: 1px solid #232b3b;
+    border-radius: 6px;
+}
+
+QFrame#TelemetryCard:hover {
+    border-color: #334155;
+}
+
+QLabel#TelemetryCardTitle {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: #7c8ba1;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #1e2636;
+}
+
+QLabel#MetricLabel {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    color: #708096;
+}
+
+/* Numeric readings: neutral when nominal, coloured only when off-nominal */
+QLabel#MetricValue {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: #e2e8f0;
+}
+
+QLabel#MetricValue[severity="WARNING"] { color: #fbbf24; }
+QLabel#MetricValue[severity="ERROR"]   { color: #f87171; }
+QLabel#MetricValue[severity="OFFLINE"] { color: #64748b; }
+QLabel#MetricValue[severity="NO_DATA"] { color: #475569; }
+
+/* Headline readings (battery %, speed, roll/pitch, link state) */
+QLabel#MetricValueStrong {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 14px;
+    font-weight: 800;
+    color: #38bdf8;
+}
+
+QLabel#MetricValueStrong[severity="WARNING"] { color: #fbbf24; }
+QLabel#MetricValueStrong[severity="ERROR"]   { color: #f87171; }
+QLabel#MetricValueStrong[severity="OFFLINE"] { color: #64748b; }
+QLabel#MetricValueStrong[severity="NO_DATA"] { color: #475569; }
+
+/* State words (HEALTHY / LOW / ONLINE / OFFLINE): coloured by condition */
+QLabel#StatusValue {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.6px;
+    color: #94a3b8;
+}
+
+QLabel#StatusValue[severity="NORMAL"]  { color: #34d399; }
+QLabel#StatusValue[severity="WARNING"] { color: #fbbf24; }
+QLabel#StatusValue[severity="ERROR"]   { color: #f87171; }
+QLabel#StatusValue[severity="OFFLINE"] { color: #64748b; }
+QLabel#StatusValue[severity="NO_DATA"] { color: #475569; }
+
+/* Compact diagnostics footer inside the sensors card */
+QLabel#CardSubtext[severity="NO_DATA"] { color: #475569; }
+QLabel#CardSubtext[severity="WARNING"] { color: #fbbf24; }
+QLabel#CardSubtext[severity="ERROR"]   { color: #f87171; }

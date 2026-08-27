@@ -16,10 +16,19 @@ from PySide6.QtWidgets import (
 )
 
 from mission_control.core.config import AppConfig, RoverConfig
+from mission_control.core.event_bus import EventBus, get_event_bus
 from mission_control.core.logger import get_logger
+from mission_control.core.mission_clock import MissionClock
 from mission_control.comms.base_client import BaseCommsClient
-from mission_control.telemetry.state import ConnectionState, MissionMode
-from mission_control.ui.components.status_card import StatusCard
+from mission_control.telemetry.state import (
+    ConnectionState,
+    MissionPhase,
+    RoverState,
+    StateManager,
+)
+from mission_control.ui.components.mission_controls_widget import MissionControlsWidget
+from mission_control.ui.components.mission_status_widget import MissionStatusWidget
+from mission_control.ui.components.telemetry_panel import TelemetryPanel
 from mission_control.video.player_widget import LiveVideoPlayerWidget
 
 logger = get_logger("ui.main_window")
@@ -34,11 +43,25 @@ class MainWindow(QMainWindow):
         rover_config: RoverConfig,
         comms_client: BaseCommsClient,
         parent: Optional[QWidget] = None,
+        event_bus: Optional[EventBus] = None,
+        state_manager: Optional[StateManager] = None,
     ):
         super().__init__(parent)
         self.app_config = app_config
         self.rover_config = rover_config
         self.comms_client = comms_client
+        # Telemetry reaches the UI only through the EventBus, never straight from
+        # the comms client, so the state layer stays the single source of truth.
+        self.event_bus = event_bus if event_bus is not None else get_event_bus()
+        # Mission phase is read from and written to application state, never held
+        # in a widget. A standalone window without a pipeline gets its own manager.
+        self.state_manager = state_manager if state_manager is not None else StateManager()
+
+        # The run countdown is operator-station time, not rover telemetry.
+        self.mission_clock = MissionClock(
+            duration_seconds=app_config.mission.run_duration_seconds,
+            parent=self,
+        )
 
         self._init_window()
         self._setup_ui()
@@ -70,6 +93,10 @@ class MainWindow(QMainWindow):
         header = self._create_header_bar()
         root_layout.addWidget(header)
 
+        # 1b. Mission Bar (phase selection + clock controls, development mock)
+        self.mission_controls = MissionControlsWidget()
+        root_layout.addWidget(self.mission_controls)
+
         # Content Layout
         content_container = QWidget()
         content_layout = QVBoxLayout(content_container)
@@ -80,9 +107,10 @@ class MainWindow(QMainWindow):
         main_splitter = self._create_main_visualization_area()
         content_layout.addWidget(main_splitter, stretch=4)
 
-        # 3. Bottom Area (Telemetry, Mission State, Diagnostics)
+        # 3. Bottom Area (Telemetry strip — deliberately height-capped so the
+        #    live camera keeps the majority of the viewport)
         bottom_panel = self._create_bottom_panel()
-        content_layout.addWidget(bottom_panel, stretch=1)
+        content_layout.addWidget(bottom_panel, stretch=0)
 
         root_layout.addWidget(content_container, stretch=1)
 
@@ -121,19 +149,11 @@ class MainWindow(QMainWindow):
         conn_block.addWidget(self.connection_badge)
         layout.addLayout(conn_block)
 
-        # Mission Timer Placeholder (30 Minutes Competition Run)
-        timer_block = QVBoxLayout()
-        timer_block.setSpacing(2)
-        timer_title = QLabel("MISSION CLOCK")
-        timer_title.setObjectName("CardHeader")
-        minutes = self.app_config.mission.run_duration_seconds // 60
-        seconds = self.app_config.mission.run_duration_seconds % 60
-        self.timer_label = QLabel(f"{minutes:02d}:{seconds:02d}")
-        self.timer_label.setProperty("class", "MonoStat")
-        self.timer_label.setAlignment(Qt.AlignCenter)
-        timer_block.addWidget(timer_title)
-        timer_block.addWidget(self.timer_label)
-        layout.addLayout(timer_block)
+        # Mission Countdown & Phase (competition run duration from configuration)
+        self.mission_status = MissionStatusWidget(
+            duration_seconds=self.app_config.mission.run_duration_seconds
+        )
+        layout.addWidget(self.mission_status)
 
         # Safety / System Status Placeholder
         safety_block = QVBoxLayout()
@@ -195,43 +215,54 @@ class MainWindow(QMainWindow):
         return splitter
 
     def _create_bottom_panel(self) -> QWidget:
-        """Constructs the bottom status cards panel."""
-        bottom = QWidget()
-        layout = QHBoxLayout(bottom)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-
-        # Telemetry Card
-        self.telemetry_card = StatusCard(
-            title="Telemetry",
-            initial_value="NO TELEMETRY",
-            subtext="Battery: --V | IMU: --° | Encoders: -- RPM",
-        )
-        layout.addWidget(self.telemetry_card, stretch=1)
-
-        # Mission State Card
-        self.mission_card = StatusCard(
-            title="Mission State",
-            initial_value=MissionMode.IDLE.value,
-            subtext="Phase: Pre-Check | Autonomous Sequence: Inactive",
-        )
-        layout.addWidget(self.mission_card, stretch=1)
-
-        # Diagnostics Card
-        self.diagnostics_card = StatusCard(
-            title="System Diagnostics",
-            initial_value="NOMINAL (STANDBY)",
-            subtext="Jetson Temp: --°C | Link Latency: -- ms",
-        )
-        layout.addWidget(self.diagnostics_card, stretch=1)
-
-        return bottom
+        """Constructs the operator telemetry strip."""
+        self.telemetry_panel = TelemetryPanel()
+        self.telemetry_panel.setMaximumHeight(180)
+        return self.telemetry_panel
 
     def _connect_signals(self) -> None:
-        """Binds comms client signals to UI slot handlers."""
+        """Binds comms lifecycle signals and the EventBus telemetry feed to the UI."""
         self.comms_client.connection_state_changed.connect(self._on_connection_changed)
-        self.comms_client.heartbeat_received.connect(self._on_heartbeat_received)
-        self.comms_client.telemetry_received.connect(self._on_telemetry_received)
+        self.event_bus.telemetry_updated.connect(self._on_telemetry_snapshot)
+
+        # Mission clock <-> header display
+        self.mission_clock.tick.connect(self.mission_status.set_remaining)
+        self.mission_clock.finished.connect(self._on_mission_finished)
+        self.mission_clock.running_changed.connect(self.mission_controls.set_running)
+
+        # Development mock controls
+        self.mission_controls.phase_requested.connect(self._on_phase_requested)
+        self.mission_controls.start_pause_requested.connect(self.mission_clock.toggle)
+        self.mission_controls.reset_requested.connect(self._on_mission_reset)
+
+        self._render_mission_phase()
+
+    def _on_phase_requested(self, phase: MissionPhase) -> None:
+        """Operator selected a mission phase: write it to state, then re-render."""
+        self.state_manager.set_mission_phase(phase)
+        logger.info(f"Mission phase set to {phase.value} (mock operator control).")
+        self._render_mission_phase()
+
+    def _on_mission_finished(self) -> None:
+        """Run duration elapsed: show MISSION COMPLETE and close out the timeline."""
+        self.mission_status.set_complete(True)
+        self.state_manager.set_mission_phase(MissionPhase.POST_RUN)
+        self._render_mission_phase()
+
+    def _on_mission_reset(self) -> None:
+        """Returns the clock to full duration and the timeline to PRE-CHECK."""
+        self.mission_clock.reset()
+        self.mission_status.set_complete(False)
+        self.mission_status.set_remaining(self.mission_clock.remaining_seconds)
+        self.state_manager.set_mission_phase(MissionPhase.PRE_CHECK)
+        self._render_mission_phase()
+
+    def _render_mission_phase(self, phase: Optional[MissionPhase] = None) -> None:
+        """Renders the mission phase held in application state."""
+        if phase is None:
+            phase = self.state_manager.get_snapshot().mission_phase
+        self.mission_status.set_phase(phase)
+        self.mission_controls.set_active_phase(phase)
 
     def _toggle_connection(self) -> None:
         """Handles operator connect/disconnect toggle."""
@@ -262,26 +293,23 @@ class MainWindow(QMainWindow):
         if state_str == ConnectionState.MOCK_MODE.value:
             self.connection_badge.setProperty("class", "Badge BadgeMock")
             self.connect_btn.setText("DISCONNECT")
-            self.telemetry_card.set_value("MOCK TELEMETRY ACTIVE")
-            self.telemetry_card.set_subtext("Synthetic Heartbeat: Active")
         elif state_str == ConnectionState.CONNECTED.value:
             self.connection_badge.setProperty("class", "Badge BadgeConnected")
             self.connect_btn.setText("DISCONNECT")
         else:
             self.connection_badge.setProperty("class", "Badge BadgeDisconnected")
             self.connect_btn.setText("CONNECT MOCK")
-            self.telemetry_card.set_value("NO TELEMETRY")
-            self.telemetry_card.set_subtext("Battery: --V | IMU: --° | Encoders: -- RPM")
-            self.diagnostics_card.set_subtext("Jetson Temp: --°C | Link Latency: -- ms")
+            # Link is down: drop straight to the safe no-telemetry presentation
+            # instead of leaving the last received values on screen.
+            self.telemetry_panel.show_no_data()
 
         self.connection_badge.style().unpolish(self.connection_badge)
         self.connection_badge.style().polish(self.connection_badge)
 
-    def _on_heartbeat_received(self, latency_ms: float) -> None:
-        """Updates diagnostic heartbeat latency display."""
-        self.diagnostics_card.set_subtext(f"Jetson: OK | Latency: {latency_ms:.1f} ms")
-
-    def _on_telemetry_received(self, state_snapshot) -> None:
-        """Updates telemetry widgets on incoming telemetry packet."""
-        # Baseline hook for future telemetry population
-        pass
+    def _on_telemetry_snapshot(self, state_snapshot) -> None:
+        """Renders a rover state snapshot published by the TelemetryBridge."""
+        if not isinstance(state_snapshot, RoverState):
+            self.telemetry_panel.show_no_data()
+            return
+        self.telemetry_panel.update_from_state(state_snapshot)
+        self._render_mission_phase(state_snapshot.mission_phase)

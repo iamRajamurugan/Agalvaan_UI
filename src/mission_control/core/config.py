@@ -30,6 +30,18 @@ class MissionConfig:
 
 
 @dataclass
+class TelemetryConfig:
+    """Telemetry pipeline rates.
+
+    mock_rate_hz drives the mock publish rate; ui_refresh_fps caps how often the
+    telemetry widgets repaint, independently of how fast telemetry arrives.
+    """
+    mock_rate_hz: int = 20
+    ui_refresh_fps: int = 30
+    stale_timeout_ms: int = 2000
+
+
+@dataclass
 class AppConfig:
     name: str = "Rover Mission Control"
     version: str = "0.1.0"
@@ -37,6 +49,7 @@ class AppConfig:
     log_level: str = "INFO"
     ui: UIConfig = field(default_factory=UIConfig)
     mission: MissionConfig = field(default_factory=MissionConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
 
 
 @dataclass
@@ -116,6 +129,7 @@ def load_app_config(config_dir: Optional[Path] = None) -> AppConfig:
     app_section = data.get("app", {})
     ui_section = data.get("ui", {})
     mission_section = data.get("mission", {})
+    telemetry_section = data.get("telemetry", {})
 
     ui_config = UIConfig(
         window_title=ui_section.get("window_title", "Rover Mission Control"),
@@ -134,6 +148,13 @@ def load_app_config(config_dir: Optional[Path] = None) -> AppConfig:
         heartbeat_timeout_ms=mission_section.get("heartbeat_timeout_ms", 1000),
     )
 
+    telemetry_config = TelemetryConfig(
+        mock_rate_hz=telemetry_section.get("mock_rate_hz", 20),
+        # Falls back to the shared UI frame cap when not explicitly configured.
+        ui_refresh_fps=telemetry_section.get("ui_refresh_fps", ui_config.fps_limit),
+        stale_timeout_ms=telemetry_section.get("stale_timeout_ms", 2000),
+    )
+
     return AppConfig(
         name=app_section.get("name", "Rover Mission Control"),
         version=app_section.get("version", "0.1.0"),
@@ -141,6 +162,7 @@ def load_app_config(config_dir: Optional[Path] = None) -> AppConfig:
         log_level=app_section.get("log_level", "INFO"),
         ui=ui_config,
         mission=mission_config,
+        telemetry=telemetry_config,
     )
 
 

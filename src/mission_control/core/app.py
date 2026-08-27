@@ -5,10 +5,13 @@ from typing import Optional
 from PySide6.QtWidgets import QApplication
 
 from mission_control.core.config import AppConfig, RoverConfig, load_config
+from mission_control.core.event_bus import EventBus, get_event_bus
 from mission_control.core.logger import setup_logger, get_logger
+from mission_control.core.telemetry_bridge import TelemetryBridge
 from mission_control.comms.base_client import BaseCommsClient
 from mission_control.comms.mock_client import MockCommsClient
 from mission_control.comms.ros2.client import ROS2CommsClient, is_ros2_available
+from mission_control.telemetry.state import StateManager
 from mission_control.video.worker import VideoWorker
 from mission_control.video.source import TestPatternVideoSource, OpenCVVideoSource
 from mission_control.ui.main_window import MainWindow
@@ -26,6 +29,9 @@ class MissionControlApp:
         self.rover_config: RoverConfig
         self.qapp: Optional[QApplication] = None
         self.comms_client: Optional[BaseCommsClient] = None
+        self.state_manager: Optional[StateManager] = None
+        self.event_bus: Optional[EventBus] = None
+        self.telemetry_bridge: Optional[TelemetryBridge] = None
         self.video_worker: Optional[VideoWorker] = None
         self.main_window: Optional[MainWindow] = None
 
@@ -50,14 +56,30 @@ class MissionControlApp:
             self.qapp.setStyleSheet(stylesheet)
 
         # 5. Initialize Communication Backend
+        telemetry_cfg = self.app_config.telemetry
+
         if self.app_config.mock_mode or not is_ros2_available():
             logger.info("Operating in MOCK MODE (Standalone development).")
-            self.comms_client = MockCommsClient()
+            self.comms_client = MockCommsClient(
+                telemetry_interval_ms=int(1000 / max(1, telemetry_cfg.mock_rate_hz)),
+            )
         else:
             logger.info("ROS 2 environment detected. Initializing ROS2CommsClient...")
             self.comms_client = ROS2CommsClient()
 
         self.comms_client.start()
+
+        # 5b. Telemetry Pipeline: comms -> StateManager -> EventBus -> UI widgets
+        self.event_bus = get_event_bus()
+        self.state_manager = StateManager(
+            stale_timeout_seconds=telemetry_cfg.stale_timeout_ms / 1000.0,
+        )
+        self.telemetry_bridge = TelemetryBridge(
+            comms_client=self.comms_client,
+            state_manager=self.state_manager,
+            event_bus=self.event_bus,
+            refresh_fps=telemetry_cfg.ui_refresh_fps,
+        )
 
         # 6. Initialize Video Subsystem (Standalone Test Pattern by default)
         video_source = TestPatternVideoSource(
@@ -72,7 +94,12 @@ class MissionControlApp:
             app_config=self.app_config,
             rover_config=self.rover_config,
             comms_client=self.comms_client,
+            event_bus=self.event_bus,
+            state_manager=self.state_manager,
         )
+
+        # 7b. Start throttled telemetry publication now that the UI is listening
+        self.telemetry_bridge.start()
 
         # 8. Bind Video Worker Signals to Video Player Widget
         if self.video_worker and self.main_window.video_player:
@@ -103,5 +130,7 @@ class MissionControlApp:
         logger.info("Shutting down Mission Control application...")
         if self.video_worker:
             self.video_worker.stop_stream()
+        if self.telemetry_bridge:
+            self.telemetry_bridge.stop()
         if self.comms_client:
             self.comms_client.stop()

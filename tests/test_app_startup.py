@@ -43,8 +43,10 @@ def test_main_window_structure(qapp):
 
     assert window.windowTitle() == app_cfg.ui.window_title
     assert window.connection_badge.text() == "NOT CONNECTED"
-    assert window.timer_label.text() == "30:00"
-    assert window.telemetry_card.value_label.text() == "NO TELEMETRY"
+    assert window.mission_status.clock_label.text() == "30:00"
+    # Telemetry strip starts in its safe no-data state until snapshots arrive.
+    assert window.telemetry_panel.power.charge_row.value() == "--"
+    assert window.telemetry_panel.connection.heartbeat_row.value() == "OFFLINE"
 
     # Simulate mock connection toggle in UI
     window.connect_btn.click()
