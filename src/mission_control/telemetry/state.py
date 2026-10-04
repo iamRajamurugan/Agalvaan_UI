@@ -39,6 +39,23 @@ class MissionPhase(str, Enum):
     POST_RUN = "POST-RUN"
 
 
+class NavigationState(str, Enum):
+    """Navigation activity reported by the rover (mock-generated for now)."""
+    IDLE = "IDLE"
+    MOVING = "MOVING"
+    OBSTACLE_DETECTED = "OBSTACLE DETECTED"
+    EXCAVATING = "EXCAVATING"
+    DUMPING = "DUMPING"
+    RETURNING = "RETURNING"
+    COMPLETED = "COMPLETED"
+
+
+class CameraId(str, Enum):
+    """Camera feed the operator has selected for the main view."""
+    FRONT = "FRONT"
+    REAR = "REAR"
+
+
 class SensorStatus(str, Enum):
     """Reported health of an individual rover sensor group."""
     ONLINE = "ONLINE"
@@ -69,6 +86,8 @@ LATENCY_ERROR_MS = 150.0
 TILT_WARNING_DEG = 15.0
 TILT_ERROR_DEG = 25.0
 DEFAULT_STALE_TIMEOUT_S = 2.0
+DIRECTION_LINEAR_EPS = 0.02   # m/s below which the rover reads as not translating
+DIRECTION_ANGULAR_EPS = 0.05  # rad/s below which the rover reads as not turning
 
 
 @dataclass
@@ -85,7 +104,13 @@ class BatteryData:
     current_amps: float = 0.0
     percentage: float = 0.0
     cell_temperature_c: float = 0.0
+    energy_consumed_wh: float = 0.0
     timestamp: float = field(default_factory=time.time)
+
+    @property
+    def power_watts(self) -> float:
+        """Instantaneous power consumption derived from voltage and current."""
+        return self.voltage * self.current_amps
 
 
 @dataclass
@@ -102,6 +127,17 @@ class DriveData:
         """Mean of the left and right wheel speeds."""
         return (self.left_wheel_rpm + self.right_wheel_rpm) / 2.0
 
+    @property
+    def direction(self) -> str:
+        """Operator wording for the current motion (positive angular = left)."""
+        turning = abs(self.angular_velocity) >= DIRECTION_ANGULAR_EPS
+        turn = "LEFT" if self.angular_velocity > 0.0 else "RIGHT"
+        if self.linear_velocity >= DIRECTION_LINEAR_EPS:
+            return f"FORWARD {turn}" if turning else "FORWARD"
+        if self.linear_velocity <= -DIRECTION_LINEAR_EPS:
+            return f"REVERSE {turn}" if turning else "REVERSE"
+        return f"TURN {turn}" if turning else "STOPPED"
+
 
 @dataclass
 class ExcavationData:
@@ -109,6 +145,10 @@ class ExcavationData:
     drum_current_amps: float = 0.0
     arm_extension_pct: float = 0.0
     hopper_weight_kg: float = 0.0
+    bucket_position_pct: float = 0.0
+    is_excavating: bool = False
+    is_dumping: bool = False
+    vibration_motor_on: bool = False
     timestamp: float = field(default_factory=time.time)
 
 
@@ -132,11 +172,31 @@ class SensorHealthData:
 
 
 @dataclass
+class NavigationData:
+    """Rover pose and navigation progress. Heading is reported by IMUData.yaw_deg."""
+    x_m: float = 0.0
+    y_m: float = 0.0
+    distance_to_target_m: float = 0.0
+    state: NavigationState = NavigationState.IDLE
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class PerceptionData:
+    """Marker detection and TF Mini range-finder obstacle status."""
+    marker_detected: bool = False
+    obstacle_detected: bool = False
+    obstacle_distance_m: float = 0.0
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
 class RoverState:
     """Thread-safe snapshot container of the overall rover state."""
     connection_state: ConnectionState = ConnectionState.DISCONNECTED
     mission_mode: MissionMode = MissionMode.IDLE
     mission_phase: MissionPhase = MissionPhase.PRE_CHECK
+    selected_camera: CameraId = CameraId.FRONT
     is_estopped: bool = False
     heartbeat_latency_ms: float = 0.0
     last_heartbeat_time: float = 0.0
@@ -147,6 +207,8 @@ class RoverState:
     excavation: ExcavationData = field(default_factory=ExcavationData)
     diagnostics: DiagnosticsData = field(default_factory=DiagnosticsData)
     sensors: SensorHealthData = field(default_factory=SensorHealthData)
+    navigation: NavigationData = field(default_factory=NavigationData)
+    perception: PerceptionData = field(default_factory=PerceptionData)
 
     # Telemetry freshness tracking (maintained by StateManager)
     telemetry_valid: bool = False
@@ -208,6 +270,15 @@ def sensor_severity(status: SensorStatus) -> Severity:
     return Severity.NO_DATA
 
 
+def navigation_severity(state: NavigationState) -> Severity:
+    """Maps a navigation state to an operator severity level."""
+    if state == NavigationState.OBSTACLE_DETECTED:
+        return Severity.WARNING
+    if state == NavigationState.IDLE:
+        return Severity.OFFLINE
+    return Severity.NORMAL
+
+
 def connection_severity(state: RoverState) -> Severity:
     """Maps the overall link condition to an operator severity level."""
     if state.connection_state == ConnectionState.DISCONNECTED:
@@ -267,11 +338,23 @@ class StateManager:
         with self._lock:
             self._state.mission_phase = phase
 
+    def set_selected_camera(self, camera: CameraId) -> None:
+        """Records which camera feed the operator has selected."""
+        with self._lock:
+            self._state.selected_camera = camera
+
     def set_estop(self, estopped: bool) -> None:
+        """Latches or releases the E-Stop.
+
+        Releasing never resumes the previous mode: the rover drops back to manual
+        control so an autonomous run cannot restart without an operator decision.
+        """
         with self._lock:
             self._state.is_estopped = estopped
             if estopped:
                 self._state.mission_mode = MissionMode.EMERGENCY_STOP
+            elif self._state.mission_mode == MissionMode.EMERGENCY_STOP:
+                self._state.mission_mode = MissionMode.MANUAL_TELEOP
 
     def update_heartbeat(self, latency_ms: float = 0.0) -> None:
         with self._lock:
@@ -295,6 +378,8 @@ class StateManager:
             self._state.excavation = copy.deepcopy(incoming.excavation)
             self._state.diagnostics = copy.deepcopy(incoming.diagnostics)
             self._state.sensors = copy.deepcopy(incoming.sensors)
+            self._state.navigation = copy.deepcopy(incoming.navigation)
+            self._state.perception = copy.deepcopy(incoming.perception)
 
             if incoming.heartbeat_latency_ms > 0.0:
                 self._state.heartbeat_latency_ms = incoming.heartbeat_latency_ms
@@ -322,3 +407,5 @@ class StateManager:
             self._state.excavation = ExcavationData()
             self._state.diagnostics = DiagnosticsData()
             self._state.sensors = SensorHealthData()
+            self._state.navigation = NavigationData()
+            self._state.perception = PerceptionData()

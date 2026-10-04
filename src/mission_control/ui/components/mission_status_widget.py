@@ -52,8 +52,10 @@ class MissionStatusWidget(QWidget):
         clock_block.addWidget(self.clock_label)
         layout.addLayout(clock_block)
 
-        # Mission phase block
-        phase_block = QVBoxLayout()
+        # Mission phase block (developer timeline; hidden in the operator header)
+        self.phase_container = QWidget()
+        phase_block = QVBoxLayout(self.phase_container)
+        phase_block.setContentsMargins(0, 0, 0, 0)
         phase_block.setSpacing(2)
         phase_caption = QLabel("MISSION PHASE")
         phase_caption.setObjectName("CardHeader")
@@ -63,7 +65,7 @@ class MissionStatusWidget(QWidget):
         self.phase_badge.setAlignment(Qt.AlignCenter)
         phase_block.addWidget(phase_caption)
         phase_block.addWidget(self.phase_badge)
-        layout.addLayout(phase_block)
+        layout.addWidget(self.phase_container)
 
         self._is_complete = False
         self.set_remaining(duration_seconds)
@@ -76,6 +78,10 @@ class MissionStatusWidget(QWidget):
         """Updates the countdown display and its severity styling."""
         self.clock_label.setText(format_mmss(seconds))
         apply_severity(self.clock_label, clock_severity(seconds, self._is_complete))
+
+    def set_phase_visible(self, visible: bool) -> None:
+        """Shows or hides the mission phase badge next to the countdown."""
+        self.phase_container.setVisible(visible)
 
     def set_phase(self, phase: MissionPhase) -> None:
         self.phase_badge.setText(phase.value)

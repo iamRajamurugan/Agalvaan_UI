@@ -73,6 +73,16 @@ class TelemetryCard(QFrame):
         self.body_layout.addWidget(widget)
         return widget
 
+    def add_row_pair(self, left: QWidget, right: QWidget) -> tuple[QWidget, QWidget]:
+        """Appends two rows side by side on one line, keeping dense cards short."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(16)
+        row.addWidget(left, stretch=1)
+        row.addWidget(right, stretch=1)
+        self.body_layout.addLayout(row)
+        return left, right
+
 
 class MetricRow(QWidget):
     """One ``LABEL   value`` line inside a telemetry card."""

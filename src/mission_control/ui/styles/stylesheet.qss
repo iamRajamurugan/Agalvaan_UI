@@ -391,3 +391,160 @@ QLabel#StatusValue[severity="NO_DATA"] { color: #475569; }
 QLabel#CardSubtext[severity="NO_DATA"] { color: #475569; }
 QLabel#CardSubtext[severity="WARNING"] { color: #fbbf24; }
 QLabel#CardSubtext[severity="ERROR"]   { color: #f87171; }
+
+/* ==========================================================================
+   OPERATOR LAYOUT (header controls, camera HUD, terminal)
+   ========================================================================== */
+
+/* Prominent header E-Stop. [engaged="true"] is the latched state: the button
+   then reads RESET E-STOP and the safety badge reads E-STOP ACTIVE. */
+QPushButton#EStopButton {
+    font-size: 15px;
+    padding: 12px 20px;
+    border: 2px solid #fca5a5;
+}
+
+QPushButton#EStopButton[engaged="true"] {
+    background-color: #2b171a;
+    border: 2px solid #dc2626;
+    color: #fca5a5;
+}
+
+QPushButton#EStopButton[engaged="true"]:hover {
+    background-color: #3a1c20;
+}
+
+QLabel#SafetyBadge {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    background-color: #122822;
+    color: #34d399;
+    border: 1px solid #065f46;
+}
+
+QLabel#SafetyBadge[severity="ERROR"] {
+    background-color: #dc2626;
+    color: #ffffff;
+    border: 1px solid #ef4444;
+}
+
+/* MANUAL / AUTONOMOUS selector */
+QPushButton#ModeButton {
+    background-color: #171d29;
+    border: 1px solid #2b3448;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    color: #94a3b8;
+}
+
+QPushButton#ModeButton:hover {
+    border-color: #475569;
+    color: #e2e8f0;
+}
+
+QPushButton#ModeButton:checked {
+    background-color: #0284c7;
+    border-color: #38bdf8;
+    color: #ffffff;
+}
+
+QPushButton#ModeButton:disabled {
+    background-color: #131720;
+    border-color: #1e2636;
+    color: #475569;
+}
+
+/* Small segmented selector (FRONT / REAR camera) */
+QPushButton#SegmentButton {
+    background-color: #171d29;
+    border: 1px solid #2b3448;
+    border-radius: 3px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: #94a3b8;
+}
+
+QPushButton#SegmentButton:hover {
+    border-color: #475569;
+    color: #e2e8f0;
+}
+
+QPushButton#SegmentButton:checked {
+    background-color: #10243a;
+    border-color: #0ea5e9;
+    color: #38bdf8;
+}
+
+/* Marker detection status in the camera HUD */
+QLabel#MarkerStatus {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    background-color: #1b202b;
+    color: #94a3b8;
+    border: 1px solid #334155;
+}
+
+QLabel#MarkerStatus[severity="NORMAL"] {
+    background-color: #122822;
+    color: #34d399;
+    border-color: #065f46;
+}
+
+QLabel#MarkerStatus[severity="NO_DATA"] { color: #475569; }
+
+/* Which source is feeding the camera view (amber when it is a stand-in) */
+QLabel#VideoSourceLabel {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #708096;
+}
+
+QLabel#VideoSourceLabel[severity="WARNING"] { color: #fbbf24; }
+
+/* Collapsible terminal */
+QFrame#LogConsole {
+    background-color: #0c0f15;
+    border-top: 1px solid #232a38;
+}
+
+QPushButton#LogToggleButton {
+    background-color: transparent;
+    border: none;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: #7c8ba1;
+}
+
+QPushButton#LogToggleButton:hover { color: #e2e8f0; }
+
+QLabel#LogLastMessage {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 11px;
+    color: #708096;
+}
+
+QLabel#LogLastMessage[severity="WARNING"] { color: #fbbf24; }
+QLabel#LogLastMessage[severity="ERROR"]   { color: #f87171; }
+
+QPlainTextEdit#LogView {
+    background-color: #0a0d13;
+    border: none;
+    border-top: 1px solid #1e2636;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 11px;
+    color: #cbd5e1;
+}

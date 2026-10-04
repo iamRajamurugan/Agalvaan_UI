@@ -23,6 +23,9 @@ from mission_control.telemetry.state import (
     DriveData,
     ExcavationData,
     IMUData,
+    NavigationData,
+    NavigationState,
+    PerceptionData,
     RoverState,
     SensorHealthData,
     SensorStatus,
@@ -37,6 +40,25 @@ LIDAR_DEGRADED_PERIOD_S = 47.0
 LIDAR_DEGRADED_WINDOW_S = 6.0
 ENCODER_DEGRADED_PERIOD_S = 83.0
 ENCODER_DEGRADED_WINDOW_S = 5.0
+
+# --- Mock navigation timeline: (end of segment in seconds, state), repeating ---
+NAV_CYCLE_S = 120.0
+NAV_SCHEDULE = (
+    (6.0, NavigationState.IDLE),
+    (40.0, NavigationState.MOVING),
+    (62.0, NavigationState.EXCAVATING),
+    (78.0, NavigationState.MOVING),
+    (92.0, NavigationState.DUMPING),
+    (112.0, NavigationState.RETURNING),
+    (NAV_CYCLE_S, NavigationState.COMPLETED),
+)
+NAV_TARGET_XY_M = (6.0, 3.3)
+
+# --- Mock TF Mini range profile and marker visibility ---
+TFMINI_OBSTACLE_THRESHOLD_M = 0.8
+TFMINI_PERIOD_S = 29.0
+MARKER_PERIOD_S = 30.0
+MARKER_LOST_WINDOW_S = 8.0
 
 # --- Battery model bounds (7S pack: 3.0 V .. 4.2 V per cell) ---
 PACK_MIN_VOLTAGE = 21.0
@@ -75,6 +97,7 @@ class MockTelemetryGenerator:
         self._rng = random.Random(seed)
         self._elapsed = 0.0
         self._yaw_deg = 45.0
+        self._energy_wh = 0.0
 
     @property
     def elapsed_seconds(self) -> float:
@@ -86,6 +109,7 @@ class MockTelemetryGenerator:
         self._rng = random.Random(self.seed)
         self._elapsed = 0.0
         self._yaw_deg = 45.0
+        self._energy_wh = 0.0
 
     # -- Individual channels -------------------------------------------------
 
@@ -146,6 +170,48 @@ class MockTelemetryGenerator:
             timestamp=time.time(),
         )
 
+    def _tfmini_range_m(self) -> float:
+        """Smoothly varying forward range that periodically dips below the threshold."""
+        return 2.2 + 1.6 * math.sin(2.0 * math.pi * self._elapsed / TFMINI_PERIOD_S)
+
+    def _navigation(self, obstacle_detected: bool, now: float) -> NavigationData:
+        """Bounded pose path plus the scripted navigation timeline."""
+        cycle_t = self._elapsed % NAV_CYCLE_S
+        state = next(s for end, s in NAV_SCHEDULE if cycle_t < end)
+        if obstacle_detected and state in (NavigationState.MOVING, NavigationState.RETURNING):
+            state = NavigationState.OBSTACLE_DETECTED
+
+        x = 3.4 + 2.6 * math.sin(2.0 * math.pi * self._elapsed / 97.0)
+        y = 1.9 + 1.4 * math.sin(2.0 * math.pi * self._elapsed / 61.0 + 0.8)
+        return NavigationData(
+            x_m=x,
+            y_m=y,
+            distance_to_target_m=math.hypot(NAV_TARGET_XY_M[0] - x, NAV_TARGET_XY_M[1] - y),
+            state=state,
+            timestamp=now,
+        )
+
+    def _excavation(self, now: float) -> ExcavationData:
+        """Bucket fills while excavating, stays full in transit, empties while dumping."""
+        cycle_t = self._elapsed % NAV_CYCLE_S
+        is_excavating = 40.0 <= cycle_t < 62.0
+        is_dumping = 78.0 <= cycle_t < 92.0
+        if is_excavating:
+            bucket = (cycle_t - 40.0) / 22.0 * 100.0
+        elif 62.0 <= cycle_t < 78.0:
+            bucket = 100.0
+        elif is_dumping:
+            bucket = (1.0 - (cycle_t - 78.0) / 14.0) * 100.0
+        else:
+            bucket = 0.0
+        return ExcavationData(
+            bucket_position_pct=bucket,
+            is_excavating=is_excavating,
+            is_dumping=is_dumping,
+            vibration_motor_on=is_dumping,
+            timestamp=now,
+        )
+
     # -- Public API ----------------------------------------------------------
 
     def advance(self, dt: Optional[float] = None) -> RoverState:
@@ -174,6 +240,12 @@ class MockTelemetryGenerator:
         current = 5.0 + 9.0 * abs(velocity) + 1.5 * math.sin(2.0 * math.pi * self._elapsed / 5.0)
         voltage = PACK_MIN_VOLTAGE + (PACK_MAX_VOLTAGE - PACK_MIN_VOLTAGE) * (percentage / 100.0)
         voltage -= 0.045 * current
+        self._energy_wh += voltage * current * max(0.0, step) / 3600.0
+
+        # Perception (TF Mini range + marker visibility)
+        tfmini_range = self._tfmini_range_m()
+        obstacle_detected = tfmini_range < TFMINI_OBSTACLE_THRESHOLD_M
+        marker_detected = (self._elapsed % MARKER_PERIOD_S) >= MARKER_LOST_WINDOW_S
 
         # Jetson diagnostics
         cpu = 34.0 + 11.0 * math.sin(2.0 * math.pi * self._elapsed / 17.0) + 4.0 * math.sin(
@@ -201,6 +273,7 @@ class MockTelemetryGenerator:
                 cell_temperature_c=28.0
                 + 6.0 * math.sin(2.0 * math.pi * self._elapsed / 61.0)
                 + 0.2 * current,
+                energy_consumed_wh=self._energy_wh,
                 timestamp=now,
             ),
             drive=DriveData(
@@ -214,7 +287,7 @@ class MockTelemetryGenerator:
                 ],
                 timestamp=now,
             ),
-            excavation=ExcavationData(timestamp=now),
+            excavation=self._excavation(now),
             diagnostics=DiagnosticsData(
                 cpu_usage_pct=max(0.0, min(100.0, cpu)),
                 gpu_usage_pct=max(0.0, min(100.0, gpu)),
@@ -223,4 +296,11 @@ class MockTelemetryGenerator:
                 last_heartbeat_timestamp=now,
             ),
             sensors=self._sensor_health(),
+            navigation=self._navigation(obstacle_detected, now),
+            perception=PerceptionData(
+                marker_detected=marker_detected,
+                obstacle_detected=obstacle_detected,
+                obstacle_distance_m=tfmini_range,
+                timestamp=now,
+            ),
         )
