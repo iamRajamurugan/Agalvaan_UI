@@ -6,7 +6,12 @@ from mission_control.video.source import (
     BaseVideoSource,
     TestPatternVideoSource,
     OpenCVVideoSource,
+    RealSenseVideoSource,
+    OfflineVideoSource,
+    FallbackVideoSource,
+    is_realsense_available,
 )
+from mission_control.video.factory import create_camera_source
 from mission_control.video.worker import VideoWorker
 from mission_control.video.player_widget import LiveVideoPlayerWidget, VideoCanvas
 
@@ -19,6 +24,11 @@ __all__ = [
     "BaseVideoSource",
     "TestPatternVideoSource",
     "OpenCVVideoSource",
+    "RealSenseVideoSource",
+    "OfflineVideoSource",
+    "FallbackVideoSource",
+    "is_realsense_available",
+    "create_camera_source",
     "VideoWorker",
     "LiveVideoPlayerWidget",
     "VideoCanvas",

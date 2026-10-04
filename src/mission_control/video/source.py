@@ -1,10 +1,15 @@
-"""Video source abstraction and implementations (Synthetic Test Pattern & OpenCV / RTSP)."""
+"""Video source abstraction and implementations.
+
+Sources: synthetic test pattern, OpenCV (RTSP / webcam / file), Intel RealSense
+(colour stream only), an explicit "camera offline" source, and a wrapper that falls
+back to another source when the preferred one cannot be opened.
+"""
 
 from abc import ABC, abstractmethod
 import math
 import os
 import time
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 import cv2
 import numpy as np
 
@@ -16,6 +21,16 @@ logger = get_logger("video_source")
 
 class BaseVideoSource(ABC):
     """Abstract interface for video ingest sources."""
+
+    #: False for a camera that is not configured at all; the worker then reports
+    #: OFFLINE instead of running its reconnect loop against nothing.
+    available: bool = True
+    #: True while a stand-in source is being shown instead of the real camera.
+    is_fallback: bool = False
+
+    def describe(self) -> str:
+        """Short operator-facing label for what is producing the frames."""
+        return ""
 
     @abstractmethod
     def open(self) -> bool:
@@ -41,6 +56,7 @@ class BaseVideoSource(ABC):
         pass
 
 
+
 class TestPatternVideoSource(BaseVideoSource):
     """Generates synthetic 16:9 test pattern frames with dynamic animations,
     timestamps, and simulated latency for standalone verification.
@@ -53,6 +69,7 @@ class TestPatternVideoSource(BaseVideoSource):
         height: int = 720,
         target_fps: int = 30,
         simulated_latency_base_ms: float = 18.0,
+        camera_name: str = "FRONT",
     ):
         self.width = width
         self.height = height
@@ -64,6 +81,10 @@ class TestPatternVideoSource(BaseVideoSource):
         self._frame_count = 0
         self._last_frame_time = 0.0
         self._start_time = 0.0
+        self._camera_name = camera_name
+
+    def describe(self) -> str:
+        return "SYNTHETIC"
 
     def open(self) -> bool:
         self._is_open = True
@@ -141,7 +162,7 @@ class TestPatternVideoSource(BaseVideoSource):
         # 4. Text Information Overlay
         cv2.putText(
             frame,
-            "ROVER FRONT CAMERA [SYNTHETIC TEST PATTERN]",
+            f"ROVER {self._camera_name} CAMERA [SYNTHETIC TEST PATTERN]",
             (cx - 270, cy - radius - 20),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.65,
@@ -185,6 +206,10 @@ class OpenCVVideoSource(BaseVideoSource):
         self.rtsp_transport = rtsp_transport
         self._cap: Optional[cv2.VideoCapture] = None
         self._frame_count = 0
+
+    def describe(self) -> str:
+        is_rtsp = isinstance(self.source_uri, str) and self.source_uri.startswith("rtsp://")
+        return "RTSP" if is_rtsp else "OPENCV"
 
     def open(self) -> bool:
         logger.info(f"Opening OpenCV video source: {self.source_uri}...")
@@ -240,3 +265,196 @@ class OpenCVVideoSource(BaseVideoSource):
         )
 
         return frame, metadata
+
+
+def import_realsense() -> Optional[Any]:
+    """Returns the pyrealsense2 module, or None when the SDK is not installed.
+
+    pyrealsense2 is an optional dependency: it is imported only when a RealSense
+    source is actually opened, so a development machine without it still runs.
+    """
+    try:
+        import pyrealsense2 as rs
+        return rs
+    except Exception as e:  # ImportError, or a broken native install
+        logger.debug(f"pyrealsense2 unavailable: {e}")
+        return None
+
+
+def is_realsense_available() -> bool:
+    """Checks whether the RealSense SDK can be imported in this environment."""
+    return import_realsense() is not None
+
+
+class RealSenseVideoSource(BaseVideoSource):
+    """Colour stream from an Intel RealSense camera (D456) via pyrealsense2.
+
+    Acquisition and display only: depth, point clouds and alignment are deliberately
+    not enabled here.
+    """
+
+    def __init__(
+        self,
+        width: int = 1280,
+        height: int = 720,
+        fps: int = 30,
+        serial: str = "",
+        frame_timeout_ms: int = 200,
+        rs_module: Optional[Any] = None,
+    ):
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.serial = serial
+        self.frame_timeout_ms = frame_timeout_ms
+        # Injectable so the lifecycle can be tested without the SDK or a device.
+        self._rs = rs_module
+        self._pipeline: Optional[Any] = None
+        self._frame_count = 0
+
+    def describe(self) -> str:
+        return "REALSENSE D456"
+
+    def open(self) -> bool:
+        rs = self._rs if self._rs is not None else import_realsense()
+        if rs is None:
+            logger.warning("RealSense SDK (pyrealsense2) is not installed; D456 unavailable.")
+            return False
+
+        try:
+            pipeline = rs.pipeline()
+            config = rs.config()
+            if self.serial:
+                config.enable_device(self.serial)
+            config.enable_stream(
+                rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps
+            )
+            pipeline.start(config)
+        except Exception as e:
+            # No device connected, device busy, or an unsupported stream profile.
+            logger.warning(f"RealSense D456 could not be started: {e}")
+            return False
+
+        self._pipeline = pipeline
+        self._frame_count = 0
+        logger.info(
+            f"RealSense colour stream started: {self.width}x{self.height} @ {self.fps} FPS."
+        )
+        return True
+
+    def is_opened(self) -> bool:
+        return self._pipeline is not None
+
+    def close(self) -> None:
+        pipeline, self._pipeline = self._pipeline, None
+        if pipeline is None:
+            return
+        try:
+            pipeline.stop()
+        except Exception as e:
+            logger.warning(f"Error stopping RealSense pipeline: {e}")
+        logger.info("RealSense colour stream stopped.")
+
+    def read_frame(self) -> Optional[Tuple[np.ndarray, FrameMetadata]]:
+        if self._pipeline is None:
+            return None
+
+        try:
+            ok, frames = self._pipeline.try_wait_for_frames(self.frame_timeout_ms)
+            if not ok:
+                return None
+            color = frames.get_color_frame()
+            if not color:
+                return None
+            # Copy out of the SDK-owned buffer before the frame object is released.
+            frame = np.array(color.get_data(), copy=True)
+        except Exception as e:
+            # A camera unplugged mid-stream raises here; report it as a lost frame
+            # so the worker's normal signal-loss / reconnect handling takes over.
+            logger.debug(f"RealSense frame read failed: {e}")
+            return None
+
+        self._frame_count += 1
+        h, w = frame.shape[:2]
+        metadata = FrameMetadata(
+            frame_index=self._frame_count,
+            timestamp_captured=time.monotonic(),
+            resolution_width=w,
+            resolution_height=h,
+            source_type="realsense",
+            estimated_latency_ms=0.0,  # 0.0 indicates unmeasured
+        )
+        return frame, metadata
+
+
+class OfflineVideoSource(BaseVideoSource):
+    """Stands in for a camera that is not configured. It never produces frames."""
+
+    available = False
+
+    def __init__(self, reason: str = "CAMERA OFFLINE"):
+        self.reason = reason
+
+    def describe(self) -> str:
+        return self.reason
+
+    def open(self) -> bool:
+        return False
+
+    def is_opened(self) -> bool:
+        return False
+
+    def read_frame(self) -> Optional[Tuple[np.ndarray, FrameMetadata]]:
+        return None
+
+    def close(self) -> None:
+        pass
+
+
+class FallbackVideoSource(BaseVideoSource):
+    """Opens the preferred source, or a stand-in when the preferred one is unavailable.
+
+    The preferred source is retried on every open(), so restarting the stream (or the
+    worker's reconnect after a signal loss) picks the real camera up once it appears.
+    """
+
+    def __init__(self, primary: BaseVideoSource, fallback: BaseVideoSource, primary_name: str):
+        self.primary = primary
+        self.fallback = fallback
+        self.primary_name = primary_name
+        self._active: Optional[BaseVideoSource] = None
+
+    @property
+    def is_fallback(self) -> bool:
+        return self._active is self.fallback
+
+    def describe(self) -> str:
+        if self.is_fallback:
+            return f"{self.fallback.describe()} · {self.primary_name} UNAVAILABLE"
+        return self.primary.describe()
+
+    def open(self) -> bool:
+        if self.primary.open():
+            self._active = self.primary
+            return True
+        logger.warning(
+            f"{self.primary_name} unavailable; falling back to {self.fallback.describe()} source."
+        )
+        if self.fallback.open():
+            self._active = self.fallback
+            return True
+        self._active = None
+        return False
+
+    def is_opened(self) -> bool:
+        return self._active is not None and self._active.is_opened()
+
+    def read_frame(self) -> Optional[Tuple[np.ndarray, FrameMetadata]]:
+        if self._active is None:
+            return None
+        return self._active.read_frame()
+
+    def close(self) -> None:
+        active, self._active = self._active, None
+        if active is not None:
+            active.close()

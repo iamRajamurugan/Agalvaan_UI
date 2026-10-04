@@ -22,6 +22,11 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
 ]
+# Intel RealSense D456 front camera. Optional: without it the front view falls back
+# to the synthetic test pattern.
+realsense = [
+    "pyrealsense2>=2.54",
+]
 
 [project.scripts]
 mission-control = "mission_control.main:main"

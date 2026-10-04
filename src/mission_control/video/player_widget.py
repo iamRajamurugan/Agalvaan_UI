@@ -13,8 +13,56 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
+from mission_control.telemetry.state import CameraId, RoverState, Severity
 from mission_control.video.frame_buffer import FrameMetadata
 from mission_control.video.stats import StreamState, StreamStats
+
+
+def apply_severity(widget: QWidget, severity: Severity) -> None:
+    """Sets the ``severity`` QSS property. Local copy of the telemetry helper:
+    importing it from the ui package here would create an import cycle."""
+    widget.setProperty("severity", severity.name)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+
+
+#: States in which the video worker is running, so the stream button stops it.
+_ACTIVE_STATES = (
+    StreamState.LIVE,
+    StreamState.CONNECTING,
+    StreamState.RECONNECTING,
+    StreamState.DEGRADED,
+    StreamState.NO_SIGNAL,
+    StreamState.ERROR,
+)
+
+_START_BUTTON_STYLE = (
+    "QPushButton { background-color: #0284c7; color: white; font-weight: 700; font-size: 11px; "
+    "padding: 4px 10px; border-radius: 3px; border: none; } "
+    "QPushButton:hover { background-color: #0369a1; } "
+    "QPushButton:disabled { background-color: #1e2636; color: #475569; }"
+)
+_STOP_BUTTON_STYLE = (
+    "QPushButton { background-color: #991b1b; color: white; font-weight: 700; font-size: 11px; "
+    "padding: 4px 10px; border-radius: 3px; border: none; } "
+    "QPushButton:hover { background-color: #7f1d1d; }"
+)
+_BADGE_LIVE_STYLE = (
+    "background-color: #dc2626; color: #ffffff; font-weight: 800; font-size: 11px; "
+    "padding: 3px 8px; border-radius: 3px; border: 1px solid #ef4444;"
+)
+_BADGE_CONNECTING_STYLE = (
+    "background-color: #78350f; color: #fbbf24; font-weight: 700; font-size: 11px; "
+    "padding: 3px 8px; border-radius: 3px; border: 1px solid #b45309;"
+)
+_BADGE_IDLE_STYLE = (
+    "background-color: #1e2430; color: #64748b; font-weight: 700; font-size: 11px; "
+    "padding: 3px 8px; border-radius: 3px; border: 1px solid #334155;"
+)
+
+MARKER_DETECTED_TEXT = "MARKER: DETECTED"
+MARKER_NOT_DETECTED_TEXT = "MARKER: NOT DETECTED"
+MARKER_NO_DATA_TEXT = "MARKER: --"
 
 
 class VideoCanvas(QWidget):
@@ -26,6 +74,7 @@ class VideoCanvas(QWidget):
         self._current_state: StreamState = StreamState.DISCONNECTED
         self._error_message: str = ""
         self._reconnect_count: int = 0
+        self._camera_name: str = "FRONT"
         
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
@@ -39,6 +88,11 @@ class VideoCanvas(QWidget):
         self._error_message = error_msg
         self._reconnect_count = reconnect_count
         self.update()
+
+    def set_camera_name(self, name: str) -> None:
+        if name != self._camera_name:
+            self._camera_name = name
+            self.update()
 
     def clear_frame(self) -> None:
         self._current_frame = None
@@ -95,10 +149,11 @@ class VideoCanvas(QWidget):
         font_title = QFont("Segoe UI", 14, QFont.Bold)
         font_sub = QFont("Segoe UI", 11, QFont.Normal)
 
-        if self._current_state == StreamState.CONNECTING:
+        if self._current_state in (StreamState.CONNECTING, StreamState.RECONNECTING):
             painter.setFont(font_title)
             painter.setPen(QColor(56, 189, 248))  # Cyan
-            msg = "CONNECTING TO ROVER CAMERA..."
+            verb = "RECONNECTING" if self._current_state == StreamState.RECONNECTING else "CONNECTING"
+            msg = f"{verb} TO {self._camera_name} CAMERA..."
             painter.drawText(QRect(cx - 250, cy - 40, 500, 30), Qt.AlignCenter, msg)
 
             painter.setFont(font_sub)
@@ -125,17 +180,38 @@ class VideoCanvas(QWidget):
             painter.setPen(QColor(148, 163, 184))
             painter.drawText(QRect(cx - 250, cy, 500, 30), Qt.AlignCenter, "Stream timed out • Retrying stream ingestion...")
 
+        elif self._current_state == StreamState.OFFLINE:
+            painter.setFont(font_title)
+            painter.setPen(QColor(245, 158, 11))  # Amber
+            painter.drawText(
+                QRect(cx - 250, cy - 40, 500, 30),
+                Qt.AlignCenter,
+                f"{self._camera_name} CAMERA OFFLINE",
+            )
+
+            painter.setFont(font_sub)
+            painter.setPen(QColor(148, 163, 184))
+            painter.drawText(
+                QRect(cx - 300, cy, 600, 30),
+                Qt.AlignCenter,
+                "No camera source is configured for this view",
+            )
+
         else:  # DISCONNECTED
             painter.setFont(font_title)
             painter.setPen(QColor(100, 116, 139))  # Muted slate
-            painter.drawText(QRect(cx - 250, cy - 40, 500, 30), Qt.AlignCenter, "ROVER FRONT CAMERA")
+            painter.drawText(
+                QRect(cx - 250, cy - 40, 500, 30),
+                Qt.AlignCenter,
+                f"ROVER {self._camera_name} CAMERA",
+            )
 
             painter.setFont(font_sub)
             painter.setPen(QColor(71, 85, 105))
             painter.drawText(
                 QRect(cx - 300, cy, 600, 30),
                 Qt.AlignCenter,
-                "STREAM OFFLINE • Click 'START STREAM' or connect rover to initialize player",
+                "STREAM STOPPED • Click 'START STREAM' to begin",
             )
 
 
@@ -145,6 +221,7 @@ class LiveVideoPlayerWidget(QFrame):
     stream_start_requested = Signal()
     stream_stop_requested = Signal()
     fullscreen_toggled = Signal(bool)
+    camera_requested = Signal(object)   # CameraId the operator asked for
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -153,6 +230,8 @@ class LiveVideoPlayerWidget(QFrame):
 
         self._is_fullscreen = False
         self._stats = StreamStats()
+        self._state = StreamState.DISCONNECTED
+        self._camera = CameraId.FRONT
 
         self._setup_ui()
 
@@ -196,7 +275,25 @@ class LiveVideoPlayerWidget(QFrame):
         self.state_label.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
         layout.addWidget(self.state_label)
 
+        # FRONT / REAR camera selector. The selection lives in application state;
+        # a click only requests it and set_camera() reflects what state holds.
+        self.camera_buttons: dict[CameraId, QPushButton] = {}
+        for camera in CameraId:
+            button = QPushButton(camera.value)
+            button.setObjectName("SegmentButton")
+            button.setCheckable(True)
+            button.clicked.connect(lambda _checked=False, c=camera: self._on_camera_clicked(c))
+            layout.addWidget(button)
+            self.camera_buttons[camera] = button
+        self.camera_buttons[self._camera].setChecked(True)
+
         layout.addStretch()
+
+        # Marker detection status (text + colour, never colour alone)
+        self.marker_label = QLabel(MARKER_NO_DATA_TEXT)
+        self.marker_label.setObjectName("MarkerStatus")
+        apply_severity(self.marker_label, Severity.NO_DATA)
+        layout.addWidget(self.marker_label)
 
         # Stream Resolution
         self.resolution_label = QLabel("1280×720 HD")
@@ -223,6 +320,12 @@ class LiveVideoPlayerWidget(QFrame):
         self.camera_title.setStyleSheet("color: #e2e8f0; font-weight: 700; font-size: 12px; letter-spacing: 0.5px;")
         layout.addWidget(self.camera_title)
 
+        # What is actually producing the frames (e.g. a synthetic stand-in)
+        self.source_label = QLabel("")
+        self.source_label.setObjectName("VideoSourceLabel")
+        apply_severity(self.source_label, Severity.NORMAL)
+        layout.addWidget(self.source_label)
+
         layout.addStretch()
 
         # FPS Display
@@ -237,11 +340,7 @@ class LiveVideoPlayerWidget(QFrame):
 
         # Stream Toggle Button
         self.toggle_stream_btn = QPushButton("START STREAM")
-        self.toggle_stream_btn.setStyleSheet(
-            "QPushButton { background-color: #0284c7; color: white; font-weight: 700; font-size: 11px; "
-            "padding: 4px 10px; border-radius: 3px; border: none; } "
-            "QPushButton:hover { background-color: #0369a1; }"
-        )
+        self.toggle_stream_btn.setStyleSheet(_START_BUTTON_STYLE)
         self.toggle_stream_btn.clicked.connect(self._on_toggle_stream)
         layout.addWidget(self.toggle_stream_btn)
 
@@ -268,45 +367,92 @@ class LiveVideoPlayerWidget(QFrame):
         self.latency_label.setText(stats.latency_str)
         if stats.resolution_width > 0:
             self.resolution_label.setText(f"{stats.resolution_str} HD")
+        if self._state in _ACTIVE_STATES and self.source_label.text() != stats.source_label:
+            self.source_label.setText(stats.source_label)
+            apply_severity(
+                self.source_label,
+                Severity.WARNING if stats.source_is_fallback else Severity.NORMAL,
+            )
+
+    @property
+    def stream_state(self) -> StreamState:
+        return self._state
 
     def handle_state_changed(self, state: StreamState) -> None:
         """Slot for stream state transitions."""
+        self._state = state
         self.state_label.setText(state.value)
         self.canvas.set_state(state, self._stats.error_message, self._stats.reconnect_count)
 
         if state == StreamState.LIVE:
-            self.live_badge.setStyleSheet(
-                "background-color: #dc2626; color: #ffffff; font-weight: 800; font-size: 11px; "
-                "padding: 3px 8px; border-radius: 3px; border: 1px solid #ef4444;"
-            )
-            self.toggle_stream_btn.setText("STOP STREAM")
-            self.toggle_stream_btn.setStyleSheet(
-                "QPushButton { background-color: #991b1b; color: white; font-weight: 700; font-size: 11px; "
-                "padding: 4px 10px; border-radius: 3px; border: none; } "
-                "QPushButton:hover { background-color: #7f1d1d; }"
-            )
-        elif state == StreamState.CONNECTING:
-            self.live_badge.setStyleSheet(
-                "background-color: #78350f; color: #fbbf24; font-weight: 700; font-size: 11px; "
-                "padding: 3px 8px; border-radius: 3px; border: 1px solid #b45309;"
-            )
-            self.toggle_stream_btn.setText("CONNECTING...")
+            self.live_badge.setStyleSheet(_BADGE_LIVE_STYLE)
         else:
-            self.live_badge.setStyleSheet(
-                "background-color: #1e2430; color: #64748b; font-weight: 700; font-size: 11px; "
-                "padding: 3px 8px; border-radius: 3px; border: 1px solid #334155;"
-            )
-            self.toggle_stream_btn.setText("START STREAM")
-            self.toggle_stream_btn.setStyleSheet(
-                "QPushButton { background-color: #0284c7; color: white; font-weight: 700; font-size: 11px; "
-                "padding: 4px 10px; border-radius: 3px; border: none; } "
-                "QPushButton:hover { background-color: #0369a1; }"
-            )
+            # Never leave another camera's (or a stale) frame behind a non-live state.
+            self.canvas.clear_frame()
             self.fps_label.setText("-- FPS")
             self.latency_label.setText("~-- ms")
+            self.live_badge.setStyleSheet(
+                _BADGE_CONNECTING_STYLE
+                if state in (StreamState.CONNECTING, StreamState.RECONNECTING)
+                else _BADGE_IDLE_STYLE
+            )
+
+        if state in _ACTIVE_STATES:
+            # The worker is running (live, connecting or retrying): the button stops it.
+            self.toggle_stream_btn.setText(
+                "CONNECTING..." if state == StreamState.CONNECTING else "STOP STREAM"
+            )
+            self.toggle_stream_btn.setStyleSheet(_STOP_BUTTON_STYLE)
+        else:
+            self.toggle_stream_btn.setText("START STREAM")
+            self.toggle_stream_btn.setStyleSheet(_START_BUTTON_STYLE)
+            self.source_label.setText("")
+            self.resolution_label.setText(StreamStats().resolution_str)
+        # An unconfigured camera has nothing to start.
+        self.toggle_stream_btn.setEnabled(state != StreamState.OFFLINE)
+
+    # -- Application state rendering -----------------------------------------
+
+    @property
+    def camera(self) -> CameraId:
+        return self._camera
+
+    def set_camera(self, camera: CameraId) -> None:
+        """Reflects the camera selection held in application state."""
+        self._camera = camera
+        for candidate, button in self.camera_buttons.items():
+            button.setChecked(candidate == camera)
+        title = f"ROVER {camera.value} CAMERA"
+        if self.camera_title.text() != title:
+            self.camera_title.setText(title)
+        self.canvas.set_camera_name(camera.value)
+
+    def update_from_state(self, state: RoverState) -> None:
+        """Renders the camera selection and marker detection from a state snapshot."""
+        self.set_camera(state.selected_camera)
+        if not state.has_telemetry:
+            self.show_no_data()
+        elif state.perception.marker_detected:
+            self._set_marker(MARKER_DETECTED_TEXT, Severity.NORMAL)
+        else:
+            self._set_marker(MARKER_NOT_DETECTED_TEXT, Severity.OFFLINE)
+
+    def show_no_data(self) -> None:
+        """Marker status is unknown without live telemetry."""
+        self._set_marker(MARKER_NO_DATA_TEXT, Severity.NO_DATA)
+
+    def _set_marker(self, text: str, severity: Severity) -> None:
+        if self.marker_label.text() != text:
+            self.marker_label.setText(text)
+            apply_severity(self.marker_label, severity)
+
+    def _on_camera_clicked(self, camera: CameraId) -> None:
+        # Undo the button's own toggle; the selection is re-rendered from state.
+        self.set_camera(self._camera)
+        self.camera_requested.emit(camera)
 
     def _on_toggle_stream(self) -> None:
-        if self._stats.state == StreamState.LIVE or self._stats.state == StreamState.CONNECTING:
+        if self._state in _ACTIVE_STATES:
             self.stream_stop_requested.emit()
         else:
             self.stream_start_requested.emit()

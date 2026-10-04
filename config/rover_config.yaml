@@ -37,3 +37,25 @@ sensors:
     resolution:
       width: 1280
       height: 720
+
+
+# Operator camera feeds shown in the main view (FRONT / REAR selector).
+#   type: synthetic  -> built-in test pattern (development)
+#         realsense  -> Intel RealSense colour stream (needs: pip install -e ".[realsense]")
+#         opencv     -> RTSP URL, video file, or device index via OpenCV (set url)
+#         none       -> camera not fitted; the view shows "<NAME> CAMERA OFFLINE"
+cameras:
+  front:
+    type: "realsense"            # Intel RealSense D456 (colour stream only)
+    serial: ""                   # Optional device serial; empty = first RealSense found
+    width: 1280
+    height: 720
+    fps: 30
+    fallback_to_synthetic: true  # No SDK / no device -> labelled synthetic pattern
+  rear:
+    type: "none"                 # e.g. "opencv" with url "rtsp://192.168.1.100:8554/rear_camera" or "0"
+    url: ""
+    width: 1280
+    height: 720
+    fps: 30
+    fallback_to_synthetic: false # Never show a stand-in as if it were the rear camera
