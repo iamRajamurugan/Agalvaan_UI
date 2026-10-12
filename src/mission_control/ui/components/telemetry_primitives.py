@@ -45,6 +45,24 @@ def apply_severity(widget: QWidget, severity: Severity) -> None:
     style.polish(widget)
 
 
+class ElidedLabel(QLabel):
+    """Label that shortens its text with an ellipsis instead of clipping it."""
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self._full_text = text
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def full_text(self) -> str:
+        return self._full_text
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        elided = self.fontMetrics().elidedText(self._full_text, Qt.ElideRight, self.width())
+        if elided != self.text():
+            super().setText(elided)
+
+
 class TelemetryCard(QFrame):
     """Compact titled container used for each telemetry section."""
 

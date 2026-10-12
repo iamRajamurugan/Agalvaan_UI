@@ -12,7 +12,7 @@ from mission_control.core.telemetry_bridge import TelemetryBridge
 from mission_control.comms.base_client import BaseCommsClient
 from mission_control.comms.mock_client import MockCommsClient
 from mission_control.comms.ros2.client import ROS2CommsClient, is_ros2_available
-from mission_control.telemetry.state import CameraId, MissionMode, StateManager
+from mission_control.telemetry.state import CameraId, StateManager
 from mission_control.video.factory import create_camera_source
 from mission_control.video.source import BaseVideoSource
 from mission_control.video.worker import VideoWorker
@@ -78,8 +78,6 @@ class MissionControlApp:
         self.state_manager = StateManager(
             stale_timeout_seconds=telemetry_cfg.stale_timeout_ms / 1000.0,
         )
-        # The operator station starts under manual control; autonomy is opt-in.
-        self.state_manager.set_mission_mode(MissionMode.MANUAL_TELEOP)
         self.telemetry_bridge = TelemetryBridge(
             comms_client=self.comms_client,
             state_manager=self.state_manager,

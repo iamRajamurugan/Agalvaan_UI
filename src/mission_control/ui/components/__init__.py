@@ -11,6 +11,7 @@ from mission_control.ui.components.telemetry_primitives import (
 )
 from mission_control.ui.components.attitude_widget import AttitudeWidget
 from mission_control.ui.components.connection_widget import ConnectionStatusWidget
+from mission_control.ui.components.environment_view import EnvironmentView
 from mission_control.ui.components.excavation_widget import AuxiliaryWidget, ExcavationWidget
 from mission_control.ui.components.log_console_widget import LogConsoleWidget
 from mission_control.ui.components.mission_controls_widget import MissionControlsWidget
@@ -31,6 +32,7 @@ __all__ = [
     "apply_severity",
     "AttitudeWidget",
     "AuxiliaryWidget",
+    "EnvironmentView",
     "ExcavationWidget",
     "LogConsoleWidget",
     "NavigationWidget",

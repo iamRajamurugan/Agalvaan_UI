@@ -1,7 +1,8 @@
 """Main Window of the Rover Mission Control application."""
 
+import time
 from typing import Optional
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -32,15 +33,27 @@ from mission_control.ui.components.mission_controls_widget import MissionControl
 from mission_control.ui.components.mission_status_widget import MissionStatusWidget
 from mission_control.ui.components.navigation_widget import NavigationWidget, ObstacleWidget
 from mission_control.ui.components.telemetry_panel import TelemetryPanel
-from mission_control.ui.components.telemetry_primitives import apply_severity
+from mission_control.ui.components.telemetry_primitives import ElidedLabel, apply_severity
 from mission_control.video.player_widget import LiveVideoPlayerWidget
 
 logger = get_logger("ui.main_window")
 
 ESTOP_TEXT = "E-STOP"
-ESTOP_RESET_TEXT = "RESET E-STOP"
+ESTOP_RESET_TEXT = "HOLD TO RESET"
+ESTOP_HOLDING_TEXT = "KEEP HOLDING…"
 SAFETY_READY_TEXT = "SYSTEM READY"
 SAFETY_ESTOP_TEXT = "E-STOP ACTIVE"
+MISSION_START_TEXT = "▶  START"
+MISSION_RESUME_TEXT = "▶  RESUME"
+MISSION_RUNNING_TEXT = "RUNNING"
+MISSION_COMPLETE_TEXT = "COMPLETE"
+
+SAFETY_CAPTION = "SAFETY"
+# Shown while latched without a real rover link: the latch is station-side only.
+SAFETY_MOCK_CAPTION = "SAFETY · MOCK"
+
+#: How long the E-Stop button must be held to release the latch.
+ESTOP_RESET_HOLD_MS = 1500
 
 #: Operator-selectable control modes, in display order.
 CONTROL_MODES = (
@@ -49,6 +62,8 @@ CONTROL_MODES = (
 )
 
 SIDE_PANEL_WIDTH = 250
+#: Fixed width of the header's E-Stop column, so latching never shifts the header.
+ESTOP_COLUMN_WIDTH = 204
 TELEMETRY_STRIP_MAX_HEIGHT = 180
 
 
@@ -81,6 +96,13 @@ class MainWindow(QMainWindow):
             duration_seconds=app_config.mission.run_duration_seconds,
             parent=self,
         )
+
+        # Releasing the E-Stop takes a deliberate press-and-hold, never a click.
+        self.estop_reset_hold_ms = ESTOP_RESET_HOLD_MS
+        self._estop_hold_started: Optional[float] = None
+        self._estop_hold_timer = QTimer(self)
+        self._estop_hold_timer.setInterval(25)
+        self._estop_hold_timer.timeout.connect(self._on_estop_hold_tick)
 
         self._init_window()
         self._setup_ui()
@@ -137,6 +159,9 @@ class MainWindow(QMainWindow):
         self.log_console = LogConsoleWidget()
         root_layout.addWidget(self.log_console)
 
+        # The header shows the countdown only; the phase is a developer timeline and
+        # is visible on the developer mission bar.
+        self.mission_status.set_phase_visible(False)
         self.set_dev_controls_visible(self.app_config.ui.show_dev_controls)
 
     def _create_header_bar(self) -> QWidget:
@@ -145,41 +170,35 @@ class MainWindow(QMainWindow):
         header.setObjectName("HeaderBar")
         layout = QHBoxLayout(header)
         layout.setContentsMargins(16, 8, 16, 8)
-        layout.setSpacing(16)
+        layout.setSpacing(14)
 
         # Title Block
         title_block = QVBoxLayout()
         title_block.setSpacing(2)
         title_label = QLabel("ROVER MISSION CONTROL")
         title_label.setObjectName("AppTitle")
-        subtitle_label = QLabel(
+        # The title block takes whatever width the controls leave. In a narrow
+        # window the subtitle is shortened before any control is squeezed.
+        subtitle_label = ElidedLabel(
             f"{self.rover_config.name.upper()} • {self.app_config.mission.competition_name.upper()}"
         )
         subtitle_label.setObjectName("AppSubtitle")
-        # The title takes whatever width the controls leave and is clipped first,
-        # so a narrow window never squeezes the operator controls.
-        for label in (title_label, subtitle_label):
-            label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         title_block.addWidget(title_label)
         title_block.addWidget(subtitle_label)
         layout.addLayout(title_block, stretch=1)
 
-        # Rover connection status + connect action
+        # Rover connection status over the connect action
         conn_block = QVBoxLayout()
-        conn_block.setSpacing(2)
-        conn_label_title = QLabel("ROVER LINK")
-        conn_label_title.setObjectName("CardHeader")
+        conn_block.setSpacing(4)
         self.connection_badge = QLabel("NOT CONNECTED")
         self.connection_badge.setProperty("class", "Badge BadgeDisconnected")
         self.connection_badge.setAlignment(Qt.AlignCenter)
-        conn_block.addWidget(conn_label_title)
-        conn_block.addWidget(self.connection_badge)
-        layout.addLayout(conn_block)
-
         self.connect_btn = QPushButton("CONNECT MOCK")
         self.connect_btn.setObjectName("PrimaryButton")
         self.connect_btn.clicked.connect(self._toggle_connection)
-        layout.addWidget(self.connect_btn)
+        conn_block.addWidget(self.connection_badge)
+        conn_block.addWidget(self.connect_btn)
+        layout.addLayout(conn_block)
 
         # Mission Countdown (competition run duration from configuration)
         self.mission_status = MissionStatusWidget(
@@ -187,11 +206,19 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.mission_status)
 
+        # Mission START. The only clock control in the operator layout: pause and
+        # reset stay on the developer mission bar.
+        self.mission_start_btn = QPushButton(MISSION_START_TEXT)
+        self.mission_start_btn.setObjectName("MissionStartButton")
+        self.mission_start_btn.clicked.connect(self._on_mission_start_requested)
+        # Sits on the same baseline as the other header buttons.
+        layout.addWidget(self.mission_start_btn, alignment=Qt.AlignBottom)
+
         # MANUAL / AUTONOMOUS control mode selector
         mode_block = QVBoxLayout()
-        mode_block.setSpacing(2)
+        mode_block.setSpacing(4)
         mode_title = QLabel("CONTROL MODE")
-        mode_title.setObjectName("CardHeader")
+        mode_title.setObjectName("HeaderCaption")
         mode_block.addWidget(mode_title)
         mode_row = QHBoxLayout()
         mode_row.setSpacing(0)
@@ -206,22 +233,31 @@ class MainWindow(QMainWindow):
         mode_block.addLayout(mode_row)
         layout.addLayout(mode_block)
 
-        # Safety status + Emergency Stop
-        safety_block = QVBoxLayout()
-        safety_block.setSpacing(2)
-        safety_title = QLabel("SAFETY")
-        safety_title.setObjectName("CardHeader")
+        # Safety status over the Emergency Stop, in one fixed-width column
+        safety_column = QWidget()
+        safety_column.setFixedWidth(ESTOP_COLUMN_WIDTH)
+        safety_block = QVBoxLayout(safety_column)
+        safety_block.setContentsMargins(0, 0, 0, 0)
+        safety_block.setSpacing(4)
+        safety_row = QHBoxLayout()
+        safety_row.setSpacing(6)
+        self.safety_caption = QLabel(SAFETY_CAPTION)
+        self.safety_caption.setObjectName("HeaderCaption")
         self.safety_badge = QLabel(SAFETY_READY_TEXT)
         self.safety_badge.setObjectName("SafetyBadge")
         self.safety_badge.setAlignment(Qt.AlignCenter)
-        safety_block.addWidget(safety_title)
-        safety_block.addWidget(self.safety_badge)
-        layout.addLayout(safety_block)
+        safety_row.addWidget(self.safety_caption)
+        safety_row.addStretch()
+        safety_row.addWidget(self.safety_badge)
+        safety_block.addLayout(safety_row)
 
         self.estop_btn = QPushButton(ESTOP_TEXT)
         self.estop_btn.setObjectName("EStopButton")
-        self.estop_btn.clicked.connect(self._toggle_estop)
-        layout.addWidget(self.estop_btn)
+        # Engages on press (not on release); releasing the latch needs a hold.
+        self.estop_btn.pressed.connect(self._on_estop_pressed)
+        self.estop_btn.released.connect(self._cancel_estop_reset_hold)
+        safety_block.addWidget(self.estop_btn)
+        layout.addWidget(safety_column)
 
         return header
 
@@ -235,7 +271,7 @@ class MainWindow(QMainWindow):
         self.video_player = LiveVideoPlayerWidget(self)
         layout.addWidget(self.video_player, stretch=1)
 
-        # 2. Compact Navigation + TF Mini obstacle column
+        # 2. Compact Navigation + Environment / TF Mini column
         side_panel = QWidget()
         side_panel.setFixedWidth(SIDE_PANEL_WIDTH)
         side_layout = QVBoxLayout(side_panel)
@@ -244,11 +280,10 @@ class MainWindow(QMainWindow):
 
         self.navigation_panel = NavigationWidget()
         self.obstacle_panel = ObstacleWidget()
-        for card in (self.navigation_panel, self.obstacle_panel):
-            card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self.navigation_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         side_layout.addWidget(self.navigation_panel)
-        side_layout.addWidget(self.obstacle_panel)
-        side_layout.addStretch()
+        # The environment view grows into whatever height the column has left.
+        side_layout.addWidget(self.obstacle_panel, stretch=1)
         layout.addWidget(side_panel)
 
         return layout
@@ -269,6 +304,8 @@ class MainWindow(QMainWindow):
         self.mission_clock.tick.connect(self.mission_status.set_remaining)
         self.mission_clock.finished.connect(self._on_mission_finished)
         self.mission_clock.running_changed.connect(self.mission_controls.set_running)
+        self.mission_clock.running_changed.connect(self._render_mission_start)
+        self.mission_clock.finished.connect(self._render_mission_start)
 
         # Development mock controls
         self.mission_controls.phase_requested.connect(self._on_phase_requested)
@@ -295,7 +332,6 @@ class MainWindow(QMainWindow):
     def set_dev_controls_visible(self, visible: bool) -> None:
         """Shows or hides everything that is not part of the operator layout."""
         self.mission_controls.setVisible(visible)
-        self.mission_status.set_phase_visible(visible)
         self.telemetry_panel.set_diagnostics_visible(visible)
 
     # -- Operator requests: write to state, then render from state --------------
@@ -308,11 +344,11 @@ class MainWindow(QMainWindow):
 
     def _on_mode_requested(self, mode: MissionMode) -> None:
         """Operator selected MANUAL or AUTONOMOUS control."""
-        if self.state_manager.get_snapshot().is_estopped:
-            # The mode is locked while the E-Stop is latched.
+        if not self.state_manager.set_mission_mode(mode):
+            # Refused by application state: the mode is locked while E-Stop is latched.
+            logger.warning(f"Control mode change to {mode.value} refused: E-STOP is latched.")
             self._render_operator_state()
             return
-        self.state_manager.set_mission_mode(mode)
         self.comms_client.send_mission_mode(mode.value)
         self.event_bus.mission_state_changed.emit(mode.value)
         logger.info(f"Control mode set to {mode.value}.")
@@ -324,19 +360,64 @@ class MainWindow(QMainWindow):
         logger.info(f"Main view switched to {camera.value} camera.")
         self._render_operator_state()
 
-    def _toggle_estop(self) -> None:
-        """Latches or releases the E-Stop held in application state."""
-        engage = not self.state_manager.get_snapshot().is_estopped
+    # -- E-Stop: engage on press, release only by press-and-hold ------------------
+
+    @property
+    def _has_real_rover_link(self) -> bool:
+        return self.comms_client.connection_state == ConnectionState.CONNECTED
+
+    def _on_estop_pressed(self) -> None:
+        """A press engages the E-Stop at once; on a latched E-Stop it starts the hold."""
+        if not self.state_manager.get_snapshot().is_estopped:
+            self._engage_estop()
+            return
+        self._estop_hold_started = time.monotonic()
+        self.estop_btn.setText(ESTOP_HOLDING_TEXT)
+        self._estop_hold_timer.start()
+
+    def _on_estop_hold_tick(self) -> None:
+        if self._estop_hold_started is None:
+            self._estop_hold_timer.stop()
+            return
+        held_ms = (time.monotonic() - self._estop_hold_started) * 1000.0
+        if held_ms >= self.estop_reset_hold_ms:
+            self._estop_hold_started = None
+            self._estop_hold_timer.stop()
+            self._reset_estop()
+
+    def _cancel_estop_reset_hold(self) -> None:
+        """Button released (or pointer left it) before the hold completed."""
+        if self._estop_hold_started is None:
+            return
+        self._estop_hold_started = None
+        self._estop_hold_timer.stop()
+        if self.state_manager.get_snapshot().is_estopped:
+            self.estop_btn.setText(ESTOP_RESET_TEXT)
+            logger.info("E-Stop reset cancelled: hold the button to reset.")
+
+    def _engage_estop(self) -> None:
+        """Latches the E-Stop in application state."""
         # The command goes out first; the station latch must not wait on anything.
-        self.comms_client.send_estop(engage)
-        self.state_manager.set_estop(engage)
-        self.event_bus.emergency_stop_triggered.emit(engage)
-        if engage:
+        self.comms_client.send_estop(True)
+        self.state_manager.set_estop(True)
+        self.event_bus.emergency_stop_triggered.emit(True)
+        if self._has_real_rover_link:
             logger.warning("EMERGENCY STOP engaged by operator.")
         else:
-            # Releasing drops to manual control; tell the rover the same.
-            self.comms_client.send_mission_mode(MissionMode.MANUAL_TELEOP.value)
-            logger.info("Emergency Stop reset. Control mode returned to MANUAL.")
+            logger.warning(
+                "EMERGENCY STOP latched at the operator station. "
+                "MOCK / no rover link: no physical rover has been commanded to stop."
+            )
+        self._render_operator_state()
+
+    def _reset_estop(self) -> None:
+        """Releases the latch after a completed hold; control returns to MANUAL."""
+        self.comms_client.send_estop(False)
+        self.state_manager.set_estop(False)
+        self.event_bus.emergency_stop_triggered.emit(False)
+        # Releasing drops to manual control; tell the rover the same.
+        self.comms_client.send_mission_mode(MissionMode.MANUAL_TELEOP.value)
+        logger.info("Emergency Stop reset. Control mode returned to MANUAL.")
         self._render_operator_state()
 
     def _toggle_connection(self) -> None:
@@ -347,6 +428,26 @@ class MainWindow(QMainWindow):
             self.comms_client.connect_rover()
 
     # -- Mission clock ----------------------------------------------------------
+
+    def _on_mission_start_requested(self) -> None:
+        """Operator started the run. A running or finished clock ignores the request."""
+        if self.mission_clock.start():
+            logger.info("Mission started by operator.")
+        self._render_mission_start()
+
+    def _render_mission_start(self, *_args) -> None:
+        """Reflects the clock in the START control; it is only enabled when startable."""
+        clock = self.mission_clock
+        if clock.is_finished:
+            text = MISSION_COMPLETE_TEXT
+        elif clock.is_running:
+            text = MISSION_RUNNING_TEXT
+        elif clock.remaining_seconds < clock.duration_seconds:
+            text = MISSION_RESUME_TEXT   # paused from the developer bar
+        else:
+            text = MISSION_START_TEXT
+        self.mission_start_btn.setText(text)
+        self.mission_start_btn.setEnabled(not clock.is_running and not clock.is_finished)
 
     def _on_mission_finished(self) -> None:
         """Run duration elapsed: show MISSION COMPLETE and close out the timeline."""
@@ -361,6 +462,7 @@ class MainWindow(QMainWindow):
         self.mission_status.set_remaining(self.mission_clock.remaining_seconds)
         self.state_manager.set_mission_phase(MissionPhase.PRE_CHECK)
         self._render_mission_phase()
+        self._render_mission_start()
 
     # -- Rendering ---------------------------------------------------------------
 
@@ -390,6 +492,11 @@ class MainWindow(QMainWindow):
             self.estop_btn.style().polish(self.estop_btn)
             self.safety_badge.setText(SAFETY_ESTOP_TEXT if estopped else SAFETY_READY_TEXT)
             apply_severity(self.safety_badge, Severity.ERROR if estopped else Severity.NORMAL)
+
+        # Without a real rover link the latch is station-side only: say so.
+        caption = SAFETY_MOCK_CAPTION if estopped and not self._has_real_rover_link else SAFETY_CAPTION
+        if self.safety_caption.text() != caption:
+            self.safety_caption.setText(caption)
 
         self.video_player.set_camera(state.selected_camera)
 

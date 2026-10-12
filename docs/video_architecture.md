@@ -1,5 +1,35 @@
 # Rover Mission Control — Video Subsystem Architecture & Technical Audit
 
+## 0. Implementation Status
+
+This document mixes what is built with the **planned** rover-side streaming design. Current
+status:
+
+| Part | Status |
+| :--- | :--- |
+| Operator-side pipeline (`VideoWorker`, bounded frame buffer, stats, player HUD, reconnect) | Implemented |
+| Per-camera source configuration (`cameras.front` / `cameras.rear` in `config/rover_config.yaml`) | Implemented |
+| FRONT / REAR switching on a single worker | Implemented |
+| Synthetic test pattern source | Implemented; the picture shown on a development PC |
+| Intel RealSense D456 colour source (`RealSenseVideoSource`, optional `pyrealsense2`) | Implemented; tested against a fake SDK only, not against a physical camera |
+| OpenCV / RTSP source (`OpenCVVideoSource`) | Implemented; not yet run against a real stream |
+| Rear camera | Not configured by default (`type: "none"`, shown as `REAR CAMERA OFFLINE`) |
+| Jetson GStreamer encoder, MediaMTX RTSP server, network link (sections 1–6 below) | **Planned design; nothing has been run on hardware** |
+| End-to-end latency | **Unmeasured** |
+
+The RealSense source reads a camera attached by USB to the machine running Mission Control.
+A camera mounted on the rover reaches the operator laptop through the RTSP path below
+(`type: "opencv"` with a `url`).
+
+Frames are handed from the worker thread to the UI through `BoundedFrameBuffer` (capacity 2):
+the worker queues at most one wake-up and the UI thread displays only the newest buffered
+frame, so a busy UI drops stale frames instead of building a backlog.
+
+See `docs/architecture.md` section 6 for the operator-side design and `README.md` section 6
+for configuration.
+
+---
+
 ## 1. Executive Summary & Chosen Architecture
 
 The selected camera streaming architecture is a **Hybrid Dedicated RTSP / H.264 Video Transport with a Decoupled PySide6 Receiver and Stale Frame Dropping**.

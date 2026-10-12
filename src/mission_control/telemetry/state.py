@@ -182,11 +182,22 @@ class NavigationData:
 
 
 @dataclass
+class ObstaclePoint:
+    """One nearby obstacle in the rover frame.
+
+    bearing_deg is measured from straight ahead, positive to the rover's left.
+    """
+    bearing_deg: float = 0.0
+    distance_m: float = 0.0
+
+
+@dataclass
 class PerceptionData:
-    """Marker detection and TF Mini range-finder obstacle status."""
+    """Marker detection, TF Mini range-finder status, and nearby obstacles."""
     marker_detected: bool = False
     obstacle_detected: bool = False
     obstacle_distance_m: float = 0.0
+    nearby_obstacles: list[ObstaclePoint] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
 
 
@@ -303,7 +314,8 @@ class StateManager:
 
     def __init__(self, stale_timeout_seconds: float = DEFAULT_STALE_TIMEOUT_S):
         self._lock = threading.Lock()
-        self._state = RoverState()
+        # The operator station always starts under manual control; autonomy is opt-in.
+        self._state = RoverState(mission_mode=MissionMode.MANUAL_TELEOP)
         self._stale_timeout = stale_timeout_seconds
 
     @property
@@ -329,9 +341,14 @@ class StateManager:
         with self._lock:
             self._state.connection_state = state
 
-    def set_mission_mode(self, mode: MissionMode) -> None:
+    def set_mission_mode(self, mode: MissionMode) -> bool:
+        """Sets the control mode. Refused (returns False) while the E-Stop is latched,
+        so nothing can move the station into an active mode until it is reset."""
         with self._lock:
+            if self._state.is_estopped:
+                return False
             self._state.mission_mode = mode
+            return True
 
     def set_mission_phase(self, phase: MissionPhase) -> None:
         """Records the current run-timeline phase (operator-selected for now)."""

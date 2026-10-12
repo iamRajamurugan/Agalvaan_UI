@@ -1,5 +1,7 @@
 """Tests for the operator layout: E-Stop, control mode, navigation, excavation, terminal."""
 
+import time
+
 import pytest
 from PySide6.QtWidgets import QApplication
 
@@ -27,8 +29,13 @@ from mission_control.telemetry.state import (
 )
 from mission_control.ui.components.telemetry_primitives import NO_DATA_TEXT
 from mission_control.ui.main_window import (
+    ESTOP_COLUMN_WIDTH,
     ESTOP_RESET_TEXT,
     ESTOP_TEXT,
+    MISSION_COMPLETE_TEXT,
+    MISSION_RESUME_TEXT,
+    MISSION_RUNNING_TEXT,
+    MISSION_START_TEXT,
     SAFETY_ESTOP_TEXT,
     SAFETY_READY_TEXT,
     MainWindow,
@@ -61,6 +68,17 @@ def window(qapp):
 
     client.stop()
     win.close()
+
+
+def hold_to_reset(win) -> None:
+    """Releases a latched E-Stop the only way the UI allows: press and hold."""
+    win.estop_reset_hold_ms = 20
+    win.estop_btn.pressed.emit()
+    deadline = time.monotonic() + 2.0
+    while win.state_manager.get_snapshot().is_estopped and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+    win.estop_btn.released.emit()
 
 
 def live_state(**overrides) -> RoverState:
@@ -186,7 +204,7 @@ def test_estop_button_latches_through_application_state(window):
     assert win.safety_badge.text() == SAFETY_ESTOP_TEXT
     assert win.safety_badge.property("severity") == "ERROR"
 
-    win.estop_btn.click()
+    hold_to_reset(win)
 
     assert manager.get_snapshot().is_estopped is False
     assert win.estop_btn.text() == ESTOP_TEXT
@@ -201,7 +219,7 @@ def test_estop_works_without_a_rover_link(window):
     win.estop_btn.click()
     assert manager.get_snapshot().is_estopped is True
 
-    win.estop_btn.click()
+    hold_to_reset(win)
     assert manager.get_snapshot().is_estopped is False
 
 
@@ -258,7 +276,7 @@ def test_mode_selector_is_locked_while_estopped(window):
     win._on_mode_requested(MissionMode.AUTONOMOUS_NAV)
     assert manager.get_snapshot().mission_mode == MissionMode.EMERGENCY_STOP
 
-    win.estop_btn.click()
+    hold_to_reset(win)
     assert autonomous.isEnabled()
     assert win.mode_buttons[MissionMode.MANUAL_TELEOP].isChecked()
     assert not autonomous.isChecked()
@@ -402,3 +420,101 @@ def test_terminal_is_collapsed_by_default_and_collects_log_messages(window):
     assert console.is_expanded is True
     console.toggle_btn.click()
     assert console.is_expanded is False
+
+
+# --- Mission START control -------------------------------------------------
+
+
+def test_mission_does_not_start_until_the_operator_starts_it(window):
+    win, _, _ = window
+    assert win.mission_start_btn.text() == MISSION_START_TEXT
+    assert win.mission_start_btn.isEnabled()
+
+    win.connect_btn.click()  # connecting must not start the run
+
+    assert win.mission_clock.is_running is False
+    assert win.mission_status.clock_label.text() == "30:00"
+
+
+def test_start_button_starts_the_existing_mission_clock_once(window):
+    win, _, _ = window
+    starts = []
+    win.mission_clock.running_changed.connect(starts.append)
+
+    win.mission_start_btn.click()
+
+    assert win.mission_clock.is_running is True
+    assert win.mission_start_btn.text() == MISSION_RUNNING_TEXT
+    assert win.mission_start_btn.isEnabled() is False
+
+    # Repeated requests neither restart the clock nor rewind it.
+    win.mission_clock.set_remaining_seconds(1200)
+    win.mission_start_btn.click()
+    win._on_mission_start_requested()
+
+    assert starts == [True]
+    assert win.mission_clock.remaining_seconds == 1200
+    win.mission_clock.pause()
+
+
+def test_start_button_follows_pause_completion_and_reset(window):
+    win, _, _ = window
+    win.mission_start_btn.click()
+    win.mission_clock.set_remaining_seconds(900)
+
+    win.mission_controls.start_pause_btn.click()  # developer pause
+    assert win.mission_start_btn.text() == MISSION_RESUME_TEXT
+    assert win.mission_start_btn.isEnabled()
+
+    win.mission_start_btn.click()
+    win.mission_clock.set_remaining_seconds(0)
+    assert win.mission_start_btn.text() == MISSION_COMPLETE_TEXT
+    assert win.mission_start_btn.isEnabled() is False
+
+    win.mission_controls.reset_btn.click()  # developer reset
+    assert win.mission_start_btn.text() == MISSION_START_TEXT
+    assert win.mission_start_btn.isEnabled()
+
+
+# --- Header and layout responsiveness --------------------------------------
+
+
+@pytest.mark.parametrize("width", [1100, 1280, 1440])
+def test_latching_estop_does_not_shift_the_header(window, width):
+    """The E-Stop keeps its place and size when its label changes to HOLD TO RESET."""
+    win, _, _ = window
+    win.resize(width, 700)
+    win.show()
+
+    def geometry():
+        QApplication.processEvents()
+        buttons = [win.estop_btn, win.connect_btn, win.mission_start_btn, *win.mode_buttons.values()]
+        return [(b.mapTo(win, b.rect().topLeft()).x(), b.width()) for b in buttons]
+
+    normal = geometry()
+    assert win.estop_btn.width() == ESTOP_COLUMN_WIDTH
+
+    win.estop_btn.click()   # latched: HOLD TO RESET
+    assert geometry() == normal
+    win.estop_btn.pressed.emit()   # holding: KEEP HOLDING…
+    assert geometry() == normal
+    win.estop_btn.released.emit()
+    win.hide()
+
+
+def test_environment_view_gives_way_when_the_card_is_short(qapp):
+    from mission_control.ui.components.navigation_widget import ObstacleWidget
+
+    card = ObstacleWidget()
+    card.show()
+
+    card.resize(250, 320)
+    qapp.processEvents()
+    assert not card.view.isHidden()
+
+    card.resize(250, 120)
+    qapp.processEvents()
+    assert card.view.isHidden()
+    # The TF Mini status and range stay on screen as text.
+    assert not card.status_row.isHidden() and not card.range_row.isHidden()
+    card.close()

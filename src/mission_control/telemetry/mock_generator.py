@@ -25,6 +25,7 @@ from mission_control.telemetry.state import (
     IMUData,
     NavigationData,
     NavigationState,
+    ObstaclePoint,
     PerceptionData,
     RoverState,
     SensorHealthData,
@@ -59,6 +60,10 @@ TFMINI_OBSTACLE_THRESHOLD_M = 0.8
 TFMINI_PERIOD_S = 29.0
 MARKER_PERIOD_S = 30.0
 MARKER_LOST_WINDOW_S = 8.0
+
+# --- Mock arena obstacles (world frame, metres) reported relative to the rover ---
+MOCK_OBSTACLES_XY_M = ((1.6, 2.6), (4.4, 0.9), (5.2, 2.9), (2.9, 1.2))
+NEARBY_OBSTACLE_RANGE_M = 4.0
 
 # --- Battery model bounds (7S pack: 3.0 V .. 4.2 V per cell) ---
 PACK_MIN_VOLTAGE = 21.0
@@ -191,6 +196,19 @@ class MockTelemetryGenerator:
             timestamp=now,
         )
 
+    def _nearby_obstacles(self, x: float, y: float) -> list[ObstaclePoint]:
+        """Fixed arena obstacles within range, as rover-frame bearing and distance."""
+        yaw = math.radians(self._yaw_deg)
+        nearby = []
+        for obstacle_x, obstacle_y in MOCK_OBSTACLES_XY_M:
+            distance = math.hypot(obstacle_x - x, obstacle_y - y)
+            if distance > NEARBY_OBSTACLE_RANGE_M:
+                continue
+            bearing = math.degrees(math.atan2(obstacle_y - y, obstacle_x - x) - yaw)
+            bearing = (bearing + 180.0) % 360.0 - 180.0
+            nearby.append(ObstaclePoint(bearing_deg=bearing, distance_m=distance))
+        return sorted(nearby, key=lambda obstacle: obstacle.distance_m)
+
     def _excavation(self, now: float) -> ExcavationData:
         """Bucket fills while excavating, stays full in transit, empties while dumping."""
         cycle_t = self._elapsed % NAV_CYCLE_S
@@ -256,6 +274,7 @@ class MockTelemetryGenerator:
         jetson_temp = 44.0 + 5.0 * math.sin(2.0 * math.pi * self._elapsed / 71.0) + 0.08 * cpu
 
         latency = self._latency_ms()
+        navigation = self._navigation(obstacle_detected, now)
 
         return RoverState(
             heartbeat_latency_ms=latency,
@@ -296,11 +315,12 @@ class MockTelemetryGenerator:
                 last_heartbeat_timestamp=now,
             ),
             sensors=self._sensor_health(),
-            navigation=self._navigation(obstacle_detected, now),
+            navigation=navigation,
             perception=PerceptionData(
                 marker_detected=marker_detected,
                 obstacle_detected=obstacle_detected,
                 obstacle_distance_m=tfmini_range,
+                nearby_obstacles=self._nearby_obstacles(navigation.x_m, navigation.y_m),
                 timestamp=now,
             ),
         )

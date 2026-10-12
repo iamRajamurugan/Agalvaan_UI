@@ -36,29 +36,18 @@ _ACTIVE_STATES = (
     StreamState.ERROR,
 )
 
-_START_BUTTON_STYLE = (
-    "QPushButton { background-color: #0284c7; color: white; font-weight: 700; font-size: 11px; "
-    "padding: 4px 10px; border-radius: 3px; border: none; } "
-    "QPushButton:hover { background-color: #0369a1; } "
-    "QPushButton:disabled { background-color: #1e2636; color: #475569; }"
-)
-_STOP_BUTTON_STYLE = (
-    "QPushButton { background-color: #991b1b; color: white; font-weight: 700; font-size: 11px; "
-    "padding: 4px 10px; border-radius: 3px; border: none; } "
-    "QPushButton:hover { background-color: #7f1d1d; }"
-)
-_BADGE_LIVE_STYLE = (
-    "background-color: #dc2626; color: #ffffff; font-weight: 800; font-size: 11px; "
-    "padding: 3px 8px; border-radius: 3px; border: 1px solid #ef4444;"
-)
-_BADGE_CONNECTING_STYLE = (
-    "background-color: #78350f; color: #fbbf24; font-weight: 700; font-size: 11px; "
-    "padding: 3px 8px; border-radius: 3px; border: 1px solid #b45309;"
-)
-_BADGE_IDLE_STYLE = (
-    "background-color: #1e2430; color: #64748b; font-weight: 700; font-size: 11px; "
-    "padding: 3px 8px; border-radius: 3px; border: 1px solid #334155;"
-)
+#: Severity (QSS styling) of the stream state badge for each non-live state.
+_STATE_SEVERITY = {
+    StreamState.CONNECTING: Severity.WARNING,
+    StreamState.RECONNECTING: Severity.WARNING,
+    StreamState.DEGRADED: Severity.WARNING,
+    StreamState.NO_SIGNAL: Severity.WARNING,
+    StreamState.OFFLINE: Severity.WARNING,
+    StreamState.ERROR: Severity.ERROR,
+    StreamState.DISCONNECTED: Severity.OFFLINE,
+}
+
+NO_RESOLUTION_TEXT = StreamStats().resolution_str
 
 MARKER_DETECTED_TEXT = "MARKER: DETECTED"
 MARKER_NOT_DETECTED_TEXT = "MARKER: NOT DETECTED"
@@ -255,24 +244,21 @@ class LiveVideoPlayerWidget(QFrame):
     def _create_top_hud(self) -> QWidget:
         top_widget = QWidget(self)
         top_widget.setObjectName("VideoTopHUD")
-        top_widget.setStyleSheet(
-            "QWidget#VideoTopHUD { background-color: rgba(14, 18, 26, 0.92); border-bottom: 1px solid #232a38; padding: 4px 12px; }"
-        )
         layout = QHBoxLayout(top_widget)
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(12)
 
-        # 🔴 LIVE Badge
+        # Stream status: exactly one of these two is visible at a time.
+        # 🔴 LIVE badge while frames are flowing...
         self.live_badge = QLabel("● LIVE")
-        self.live_badge.setStyleSheet(
-            "background-color: #2b171a; color: #f87171; font-weight: 800; font-size: 11px; "
-            "padding: 3px 8px; border-radius: 3px; border: 1px solid #7f1d1d;"
-        )
+        self.live_badge.setObjectName("LiveBadge")
+        self.live_badge.hide()
         layout.addWidget(self.live_badge)
 
-        # Stream State Text
-        self.state_label = QLabel("DISCONNECTED")
-        self.state_label.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
+        # ...otherwise the stream state as a word (CONNECTING, OFFLINE, ...)
+        self.state_label = QLabel(StreamState.DISCONNECTED.value)
+        self.state_label.setObjectName("StreamStateBadge")
+        apply_severity(self.state_label, _STATE_SEVERITY[StreamState.DISCONNECTED])
         layout.addWidget(self.state_label)
 
         # FRONT / REAR camera selector. The selection lives in application state;
@@ -296,11 +282,8 @@ class LiveVideoPlayerWidget(QFrame):
         layout.addWidget(self.marker_label)
 
         # Stream Resolution
-        self.resolution_label = QLabel("1280×720 HD")
-        self.resolution_label.setStyleSheet(
-            "background-color: #1e2638; color: #38bdf8; font-family: monospace; font-size: 11px; "
-            "font-weight: 700; padding: 2px 6px; border-radius: 3px; border: 1px solid #0369a1;"
-        )
+        self.resolution_label = QLabel(NO_RESOLUTION_TEXT)
+        self.resolution_label.setObjectName("VideoResolution")
         layout.addWidget(self.resolution_label)
 
         return top_widget
@@ -308,16 +291,13 @@ class LiveVideoPlayerWidget(QFrame):
     def _create_bottom_hud(self) -> QWidget:
         bottom_widget = QWidget(self)
         bottom_widget.setObjectName("VideoBottomHUD")
-        bottom_widget.setStyleSheet(
-            "QWidget#VideoBottomHUD { background-color: rgba(14, 18, 26, 0.92); border-top: 1px solid #232a38; padding: 4px 12px; }"
-        )
         layout = QHBoxLayout(bottom_widget)
         layout.setContentsMargins(12, 6, 12, 6)
         layout.setSpacing(16)
 
         # Stream Title / Camera ID
         self.camera_title = QLabel("ROVER FRONT CAMERA")
-        self.camera_title.setStyleSheet("color: #e2e8f0; font-weight: 700; font-size: 12px; letter-spacing: 0.5px;")
+        self.camera_title.setObjectName("VideoTitle")
         layout.addWidget(self.camera_title)
 
         # What is actually producing the frames (e.g. a synthetic stand-in)
@@ -330,27 +310,24 @@ class LiveVideoPlayerWidget(QFrame):
 
         # FPS Display
         self.fps_label = QLabel("-- FPS")
-        self.fps_label.setStyleSheet("color: #38bdf8; font-family: monospace; font-weight: 700; font-size: 12px;")
+        self.fps_label.setObjectName("VideoStat")
         layout.addWidget(self.fps_label)
 
         # Latency Display
         self.latency_label = QLabel("~-- ms")
-        self.latency_label.setStyleSheet("color: #34d399; font-family: monospace; font-weight: 700; font-size: 12px;")
+        self.latency_label.setObjectName("VideoStat")
         layout.addWidget(self.latency_label)
 
         # Stream Toggle Button
         self.toggle_stream_btn = QPushButton("START STREAM")
-        self.toggle_stream_btn.setStyleSheet(_START_BUTTON_STYLE)
+        self.toggle_stream_btn.setObjectName("StreamButton")
+        self.toggle_stream_btn.setProperty("active", False)
         self.toggle_stream_btn.clicked.connect(self._on_toggle_stream)
         layout.addWidget(self.toggle_stream_btn)
 
         # Fullscreen Toggle Button
         self.fullscreen_btn = QPushButton("⛶ FULLSCREEN")
-        self.fullscreen_btn.setStyleSheet(
-            "QPushButton { background-color: #1e2636; color: #cbd5e1; font-weight: 600; font-size: 11px; "
-            "padding: 4px 10px; border-radius: 3px; border: 1px solid #334155; } "
-            "QPushButton:hover { background-color: #334155; color: white; }"
-        )
+        self.fullscreen_btn.setObjectName("HudButton")
         self.fullscreen_btn.clicked.connect(self.toggle_fullscreen)
         layout.addWidget(self.fullscreen_btn)
 
@@ -384,30 +361,30 @@ class LiveVideoPlayerWidget(QFrame):
         self.state_label.setText(state.value)
         self.canvas.set_state(state, self._stats.error_message, self._stats.reconnect_count)
 
-        if state == StreamState.LIVE:
-            self.live_badge.setStyleSheet(_BADGE_LIVE_STYLE)
-        else:
+        is_live = state == StreamState.LIVE
+        self.live_badge.setVisible(is_live)
+        self.state_label.setVisible(not is_live)
+        if not is_live:
+            apply_severity(self.state_label, _STATE_SEVERITY.get(state, Severity.WARNING))
             # Never leave another camera's (or a stale) frame behind a non-live state.
             self.canvas.clear_frame()
             self.fps_label.setText("-- FPS")
             self.latency_label.setText("~-- ms")
-            self.live_badge.setStyleSheet(
-                _BADGE_CONNECTING_STYLE
-                if state in (StreamState.CONNECTING, StreamState.RECONNECTING)
-                else _BADGE_IDLE_STYLE
-            )
 
-        if state in _ACTIVE_STATES:
+        is_active = state in _ACTIVE_STATES
+        if is_active:
             # The worker is running (live, connecting or retrying): the button stops it.
             self.toggle_stream_btn.setText(
                 "CONNECTING..." if state == StreamState.CONNECTING else "STOP STREAM"
             )
-            self.toggle_stream_btn.setStyleSheet(_STOP_BUTTON_STYLE)
         else:
             self.toggle_stream_btn.setText("START STREAM")
-            self.toggle_stream_btn.setStyleSheet(_START_BUTTON_STYLE)
             self.source_label.setText("")
-            self.resolution_label.setText(StreamStats().resolution_str)
+            self.resolution_label.setText(NO_RESOLUTION_TEXT)
+        if self.toggle_stream_btn.property("active") != is_active:
+            self.toggle_stream_btn.setProperty("active", is_active)
+            self.toggle_stream_btn.style().unpolish(self.toggle_stream_btn)
+            self.toggle_stream_btn.style().polish(self.toggle_stream_btn)
         # An unconfigured camera has nothing to start.
         self.toggle_stream_btn.setEnabled(state != StreamState.OFFLINE)
 
