@@ -11,8 +11,10 @@ from typing import Optional
 class StreamState(str, Enum):
     DISCONNECTED = "DISCONNECTED"
     CONNECTING = "CONNECTING"
+    RECONNECTING = "RECONNECTING"
     LIVE = "LIVE"
     DEGRADED = "DEGRADED"
+    OFFLINE = "OFFLINE"   # camera not configured / unavailable (not retried)
     NO_SIGNAL = "NO SIGNAL"
     ERROR = "STREAM ERROR"
 
@@ -32,6 +34,8 @@ class StreamStats:
     uptime_seconds: float = 0.0
     reconnect_count: int = 0
     error_message: str = ""
+    source_label: str = ""
+    source_is_fallback: bool = False
 
     @property
     def resolution_str(self) -> str:
@@ -77,6 +81,14 @@ class StreamStatisticsTracker:
         self._latency_is_simulated: bool = False
         self._session_start_time: Optional[float] = None
         self._error_message: str = ""
+        self._source_label: str = ""
+        self._source_is_fallback: bool = False
+
+    def set_source_info(self, label: str, is_fallback: bool = False) -> None:
+        """Records which source is producing frames (e.g. a synthetic stand-in)."""
+        with self._lock:
+            self._source_label = label
+            self._source_is_fallback = is_fallback
 
     def set_state(self, state: StreamState, error_msg: str = "") -> None:
         with self._lock:
@@ -85,7 +97,7 @@ class StreamStatisticsTracker:
             now = time.monotonic()
             if state == StreamState.LIVE and self._session_start_time is None:
                 self._session_start_time = now
-            elif state in (StreamState.DISCONNECTED, StreamState.ERROR):
+            elif state in (StreamState.DISCONNECTED, StreamState.ERROR, StreamState.OFFLINE):
                 self._session_start_time = None
 
     def record_reconnect_attempt(self) -> None:
@@ -159,6 +171,8 @@ class StreamStatisticsTracker:
                 uptime_seconds=uptime,
                 reconnect_count=self._reconnect_count,
                 error_message=self._error_message,
+                source_label=self._source_label,
+                source_is_fallback=self._source_is_fallback,
             )
 
     def reset(self) -> None:
@@ -174,4 +188,6 @@ class StreamStatisticsTracker:
             self._latency_is_simulated = False
             self._session_start_time = None
             self._error_message = ""
+            self._source_label = ""
+            self._source_is_fallback = False
             self._state = StreamState.DISCONNECTED

@@ -1,250 +1,255 @@
 # Rover Mission Control Application
 
-A competition-grade operator interface for a Lunabotics-style planetary rover.
+A competition operator interface for a Lunabotics-style planetary rover, built with PySide6.
 
-> **Status**: **Phase 3B — Mission Clock & Mission Phase**.
-> This repository contains the standalone Mission Control application with an integrated 16:9 YouTube-live style video player, bounded frame buffer, synthetic test pattern generator, a live operator telemetry strip driven by **mock telemetry**, and a competition run countdown with mission phase display.
+> **Status: operator UI feature-complete, running on mock data.**
 >
-> ⚠️ **No real rover telemetry is connected.** Every value shown in the telemetry panel is generated locally by `MockTelemetryGenerator` for UI development and validation. These are not measurements.
+> ⚠️ **No real rover is connected.** Every telemetry value on screen is generated locally by
+> `MockTelemetryGenerator`. The ROS 2 client is a stub: it creates no node, publishes nothing
+> and subscribes to nothing. The E-Stop, control mode and mission clock are operator-station
+> state only and command no physical hardware.
 
 ---
 
-## 1. System Overview & Architecture
+## 1. What is real and what is mock
 
-The Mission Control application runs on a Windows operator laptop and provides command, telemetry monitoring, safety management, visual awareness, and diagnostics for remote manual and autonomous rover operations.
-
-```
-+-------------------------------------------------------------------+
-|               Mission Control (Windows Laptop)                    |
-|                                                                   |
-|   +-----------------------------------------------------------+   |
-|   |          PySide6 GUI Interface (Qt UI Thread)             |   |
-|   |          - LiveVideoPlayerWidget (16:9 YouTube HUD)       |   |
-|   |          - TelemetryPanel (Power / Motion / Attitude /    |   |
-|   |            Sensors / Rover Link cards)                    |   |
-|   +-----------------------------------------------------------+   |
-|              ^                                 ^                  |
-|              | EventBus.telemetry_updated      |                  |
-|              |   (throttled to ~30 FPS)        |                  |
-|   +-------------------------------+            |                  |
-|   |  StateManager (source of truth)|           |                  |
-|   |  <- TelemetryBridge            |           |                  |
-|   +-------------------------------+            |                  |
-|                    ^                           |                  |
-|                    | Qt Signals                | Qt Signals       |
-|                    |                           |                  |
-|   +-------------------------------+   +-----------------------+   |
-|   |   Communication Abstraction   |   | VideoWorker (QThread) |   |
-|   |   - MockCommsClient (Default) |   | - Bounded Frame Buffer|   |
-|   |   - ROS2CommsClient (Humble)  |   | - Stream Stats Tracker|   |
-|   +-------------------------------+   +-----------------------+   |
-+--------------------|------------------------------|---------------+
-                     | Local Network                | RTSP / UDP
-+--------------------|------------------------------|---------------+
-|             Physical Rover (NVIDIA Jetson Orin Nano)              |
-|             - ROS 2 Humble / Ubuntu 22.04                         |
-|             - GStreamer Hardware Encoder (nvv4l2h264enc)          |
-|             - MediaMTX RTSP Server (H.264 @ 720p 30 FPS)          |
-+-------------------------------------------------------------------+
-```
-
-### Key Architectural Principles:
-1. **Operator Interface, Not Robot Brain**: The GUI does not directly command hardware or run low-level motor loops. It issues high-level setpoints to onboard ROS 2 nodes.
-2. **Communication Abstraction**: All communication flows through `BaseCommsClient`. The default `MockCommsClient` enables full GUI development without ROS 2 or physical hardware.
-2b. **Single Source of Truth**: Telemetry never travels from a comms client straight into a widget. It flows `comms client → StateManager → EventBus → telemetry widgets`, so replacing the mock client with a real ROS 2 client requires no UI change.
-3. **Dedicated Video Pipeline & Threading**: Video ingestion and frame decoding run in a dedicated `VideoWorker` (`QThread`), completely isolated from the Qt UI thread.
-4. **Stale Frame Dropping**: The `BoundedFrameBuffer` (capacity: 2) drops older frames when processing lags, prioritizing lowest operator latency over displaying every stale frame.
-5. **YouTube-Live Style Player**: 16:9 aspect ratio locking, 🔴 LIVE status indicator, real-time FPS/latency display, resolution badges, fullscreen mode, and seamless reconnect states.
+| Area | Status |
+| :--- | :--- |
+| Operator UI (header, camera view, navigation, environment, telemetry, terminal) | **Implemented** |
+| Telemetry pipeline (comms client → `StateManager` → `EventBus` → widgets) | **Implemented**, fed by mock data |
+| All telemetry values (power, motion, pose, navigation state, TF Mini range, obstacles, bucket, vibration motor, marker detection) | **Mock only** (`telemetry/mock_generator.py`) |
+| Camera pipeline (worker thread, source switching, reconnect, HUD) | **Implemented** |
+| Synthetic camera source | **Implemented** (default picture on a development PC) |
+| Intel RealSense D456 colour stream | **Hardware-ready**, optional dependency. Tested against a fake SDK only, not yet against a physical D456 |
+| OpenCV / RTSP camera source | **Hardware-ready**, not yet tested against a real stream |
+| Rear camera | **Not configured** by default; the view shows `REAR CAMERA OFFLINE` |
+| ROS 2 link (`ROS2CommsClient`) | **Stub only** |
+| E-Stop, MANUAL / AUTONOMOUS | **UI and application state only**; nothing is sent to a rover |
+| Teleoperation, autonomous navigation, SLAM, LiDAR / TF Mini drivers, excavation control | **Not implemented** |
 
 ---
 
-## 2. Prerequisites
+## 2. Setup
 
-- **Python**: `3.10` or higher
-- **OS**: Windows 10/11 (or Linux/macOS)
+Requires Python 3.10 or newer (developed on Windows 10/11).
 
----
-
-## 3. Setup & Installation
-
-### Step 1: Clone the Repository
 ```powershell
 git clone <repository_url>
 cd US_ui
-```
-
-### Step 2: Create a Local Virtual Environment
-```powershell
 python -m venv .venv
-```
-
-### Step 3: Activate the Virtual Environment
-- **Windows (PowerShell)**:
-  ```powershell
-  .\.venv\Scripts\Activate.ps1
-  ```
-- **Windows (Command Prompt)**:
-  ```cmd
-  .\.venv\Scripts\activate.bat
-  ```
-
-### Step 4: Install Dependencies
-```powershell
-pip install -e .
-# Or install development dependencies:
+.\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```
 
-*Dependencies:* `PySide6`, `PyYAML`, `numpy`, `opencv-python`, `pytest`.
+Dependencies: `PySide6`, `PyYAML`, `numpy`, `opencv-python`, and `pytest` for development.
+
+Optional, for the RealSense D456 front camera:
+
+```powershell
+pip install -e ".[realsense]"
+```
+
+Without it the application still runs; the front view falls back to the synthetic pattern.
 
 ---
 
-## 4. Running the Application
-
-To launch the Mission Control interface in standalone development mode:
+## 3. Running
 
 ```powershell
 python -m mission_control.main
 ```
-Or via the entrypoint script:
-```powershell
-mission-control
-```
 
-- Click **START STREAM** on the video player to begin rendering the live 16:9 synthetic test pattern (radar sweep line, dynamic frame counter, millisecond timestamp, and simulated latency).
-- Click **⛶ FULLSCREEN** (or press `Esc`) to enter and exit fullscreen video mode.
-- Click **CONNECT MOCK** in the top header to start the mock link, heartbeat, and telemetry stream. The telemetry strip along the bottom begins updating immediately; clicking **DISCONNECT** returns every card to its `--` / `NO DATA` state.
+or, after installation, `mission-control`.
 
----
+Typical session on a development PC:
 
-## 4a. Mission Clock & Phase (Phase 3B)
-
-The header carries the run countdown as the largest element in the window, next to the
-current mission phase:
-
-```
-MISSION CLOCK      MISSION PHASE
-   29:59             [ TELEOP ]
-```
-
-- **Countdown** — counts down from `mission.run_duration_seconds` (1800 s / `30:00` by
-  default) in `config/app_config.yaml`. Remaining time is derived from a monotonic
-  deadline, so a late timer callback cannot make the clock drift.
-- **Severity** — cyan while normal, amber under 5 minutes, red under 1 minute.
-- **MISSION COMPLETE** — at `00:00` the caption switches from `MISSION CLOCK` to a red
-  **MISSION COMPLETE**, the clock stops, and the phase closes out at `POST-RUN`.
-- **Phases** — `PRE-CHECK`, `TELEOP`, `AUTONOMOUS`, `DUMP`, `POST-RUN`. This is a plain
-  ordered label with no transition rules, held in `StateManager` like any other state and
-  rendered from snapshots — widgets never own it.
-
-### Development mock controls
-
-The strip below the header (`DEV MOCK CONTROLS · UI ONLY`) selects the mission phase and
-runs / pauses / resets the clock. **These are UI-side development controls — they command
-nothing on the rover.** When the rover reports its phase on `/mission/state`, the same
-`StateManager` field is simply written by the comms client instead, and the display is
-unchanged.
+1. Click **CONNECT MOCK** to start the mock rover link and telemetry.
+2. Click **START STREAM** on the camera view.
+3. Click **▶ START** in the header to start the mission countdown.
 
 ---
 
-## 4b. Telemetry UI (Phase 3A)
+## 4. Operator interface
 
-The bottom strip shows five compact cards. All values are **MOCK DATA**.
+```
++----------------------------------------------------------------------------------+
+| TITLE          [LINK STATUS]   MISSION CLOCK  [START]  CONTROL MODE     SAFETY   |
+|                [CONNECT]         30:00                 [MANUAL|AUTO]   [E-STOP]  |
++----------------------------------------------------------------------------------+
+| [LIVE] [FRONT|REAR]              MARKER: DETECTED  1280x720 | NAVIGATION         |
+|                                                             |  > MOVING          |
+|                                                             |  X / Y / heading   |
+|                  MAIN CAMERA (16:9)                         |  distance to target|
+|                                                             +--------------------+
+|                                                             | ENVIRONMENT        |
+|                                                             |  rover-centric view|
+| camera name · source        FPS  latency  [STREAM] [FULL]   |  TF Mini / range   |
++----------------------------------------------------------------------------------+
+| POWER            | MOTION            | EXCAVATION          | OTHER               |
++----------------------------------------------------------------------------------+
+| > TERMINAL   latest log message                                                  |
++----------------------------------------------------------------------------------+
+```
 
-| Card | Contents |
+### Header
+
+- **Rover link**: connection status badge above the connect / disconnect button.
+- **Mission clock**: counts down from `mission.run_duration_seconds` (30:00 by default). Cyan
+  normally, amber under 5 minutes, red under 1 minute, then `MISSION COMPLETE`.
+- **▶ START**: the operator starts the run explicitly. Connecting never starts it. While the
+  clock runs the button is disabled and reads `RUNNING`, so it cannot be started twice.
+  Pause and reset are developer controls (see section 7).
+- **Control mode**: `MANUAL` / `AUTONOMOUS`. Startup mode is `MANUAL`. The mode is held in
+  `StateManager`, which refuses any change while the E-Stop is latched.
+- **E-Stop**: engages on press. Once latched it reads `HOLD TO RESET` and must be held for
+  1.5 seconds to release; a click does nothing. Releasing always returns to `MANUAL`.
+  Without a real rover link the caption reads `SAFETY · MOCK`, because no physical rover has
+  been commanded to stop.
+
+### Camera view
+
+- `FRONT` / `REAR` selector, a stream status badge (`● LIVE`, `CONNECTING`, `RECONNECTING`,
+  `OFFLINE`, `NO SIGNAL`, `STREAM ERROR`, `DISCONNECTED`), marker detection status,
+  resolution, FPS and latency.
+- The bottom bar names the source actually producing the picture, for example
+  `SYNTHETIC · D456 UNAVAILABLE` when the RealSense is missing.
+- Latency is shown as `(SIM)` for the synthetic source and `LATENCY: UNMEASURED` for real
+  sources. No end-to-end latency has been measured.
+
+### Navigation and environment
+
+- **Navigation**: the navigation state as a banner with a distinct shape and word per state
+  (`IDLE`, `MOVING`, `OBSTACLE DETECTED`, `EXCAVATING`, `DUMPING`, `RETURNING`, `COMPLETED`),
+  then X, Y, heading and distance to target.
+- **Environment**: a heading-up, rover-centric view with range rings to 4 m, the TF Mini
+  forward range drawn as a beam, and nearby obstacles plotted around the rover. `CLEAR` is a
+  thin dashed green beam; `OBSTACLE` is a solid amber bar-capped beam with an amber card
+  outline. The TF Mini status and range are also shown as text below.
+- This is a status display, not a map. There is no SLAM, path planning or LiDAR processing.
+
+### Telemetry strip
+
+| Section | Contents |
 | :--- | :--- |
-| **POWER** | Battery percentage + segmented charge bar, pack voltage, current draw, derived power state (`NORMAL` / `LOW` / `CRITICAL`). |
-| **MOTION** | Ground speed (m/s), mean wheel RPM, left/right wheel split, turn rate. |
-| **ATTITUDE** | Roll, pitch (signed, with tilt severity), and heading. |
-| **SENSORS** | IMU / encoder / LiDAR health with dot **and** text label, plus a Jetson temperature and CPU line. |
-| **ROVER LINK** | Connection state, heartbeat health, link latency, and mission mode. |
+| **POWER** | Battery % with bar, voltage, current, power (W), energy consumed (Wh), power state |
+| **MOTION** | Linear velocity, angular velocity, direction, wheel RPM |
+| **EXCAVATION** | Bucket position 0–100 % with bar, excavating, dumping |
+| **OTHER** | Vibration motor ON / OFF |
 
-### Severity levels
+Severity (`NORMAL`, `WARNING`, `ERROR`, `OFFLINE`, `NO DATA`) is always carried by text as well
+as colour. When the link drops or telemetry goes stale, values are cleared to `--` rather than
+left frozen.
 
-`NORMAL`, `WARNING`, `ERROR`, `OFFLINE`, and `NO DATA` are rendered through the Qt dynamic
-property `severity` defined in `ui/styles/stylesheet.qss`. Severity is **always** carried by
-text as well as colour — a critical battery reads `CRITICAL`, an offline LiDAR reads `OFFLINE`.
+### Terminal
 
-### Data flow
+A one-line strip at the bottom shows the latest log message. Clicking **TERMINAL** expands a
+small read-only console (120 px) with the recent application log.
 
-```
-MockCommsClient (20 Hz, deterministic)
-        │  telemetry_received(RoverState)
-        ▼
-TelemetryBridge ──► StateManager  (single source of truth, thread-safe, Qt-free)
-        │                 │
-        │                 │ get_snapshot()  (independent deep copy, staleness evaluated on read)
-        │                 ▼
-        └──────► EventBus.telemetry_updated   (throttled to ui_refresh_fps, default 30 FPS)
-                          ▼
-                     TelemetryPanel  →  Power / Motion / Attitude / Sensors / Rover Link cards
-```
+---
 
-The publish rate and UI cap are independent, and both are configured in `config/app_config.yaml`:
+## 5. Mock mode
+
+`MockCommsClient` publishes a 2 Hz heartbeat and 20 Hz telemetry from
+`MockTelemetryGenerator`. The generator is deterministic: every value is a bounded function of
+elapsed time with a fixed seed, so each run and each test sees the same profile.
+
+It follows a repeating 120-second script through all seven navigation states. Bucket position,
+vibration motor, TF Mini range, marker visibility and nearby obstacles follow that script. The
+drive profile is independent of it, so the mock rover can show speed while "excavating".
+
+Rates are set in `config/app_config.yaml`:
 
 ```yaml
 telemetry:
-  mock_rate_hz: 20        # Mock telemetry publish rate (MOCK DATA ONLY)
-  ui_refresh_fps: 30      # Max telemetry widget repaint rate
-  stale_timeout_ms: 2000  # Telemetry older than this is shown as STALE
+  mock_rate_hz: 20        # Mock telemetry publish rate
+  ui_refresh_fps: 30      # Max widget repaint rate
+  stale_timeout_ms: 2000  # Telemetry older than this is treated as stale
 ```
-
-### Mock telemetry behaviour
-
-`MockTelemetryGenerator` produces deterministic, bounded, time-varying values — no
-uncontrolled randomness — so the interface looks realistic and behaves identically on
-every run:
-
-| Channel | Behaviour |
-| :--- | :--- |
-| Battery | Starts near full and drains linearly (~1.5 %/min) with a small load ripple. |
-| Voltage | Derived from charge level across a 7S pack range (21.0–29.4 V), sagging under current draw. |
-| Speed | Smooth sine profile in a plausible ~0.09–0.55 m/s band. |
-| Wheel RPM | Computed from speed and mock wheel geometry, with a left/right split from the turn rate. |
-| Roll / Pitch | Small bounded oscillations (two superimposed sine terms). |
-| Yaw | Integrated slow turn rate, wrapped to 0–360°. |
-| Latency | Baseline ~4.2 ms with a slow swell and bounded seeded jitter. |
-| Sensors | Online, with brief deterministic `DEGRADED` windows for LiDAR (every 47 s) and encoders (every 83 s). |
-| Diagnostics | Jetson temperature, CPU, GPU, and RAM as bounded oscillations. |
-
-The generator is stepped by an explicit time delta rather than the wall clock, so tests can
-advance it to any point in the profile without sleeping.
-
-### Failure and fallback states
-
-| Condition | UI behaviour |
-| :--- | :--- |
-| Never connected | Every card shows `--` / `NO DATA`; heartbeat reads `OFFLINE`. |
-| Disconnected | Telemetry is invalidated — values are cleared rather than frozen at their last reading. |
-| Stale (no packets for `stale_timeout_ms`) | Heartbeat reads `STALE` (warning); readings are withheld instead of being presented as live. |
-| Mock mode | Link card reads `MOCK MODE`. |
-| Malformed / missing snapshot | Ignored safely; the panel falls back to its no-data state without raising. |
 
 ---
 
-## 5. Running Automated Tests
+## 6. Camera configuration
 
-Run the full 90-test pytest suite:
+Cameras are configured in `config/rover_config.yaml`. Nothing about camera devices or URLs is
+hard-coded in the UI.
+
+```yaml
+cameras:
+  front:
+    type: "realsense"            # Intel RealSense D456, colour stream only
+    serial: ""                   # Optional device serial; empty = first RealSense found
+    width: 1280
+    height: 720
+    fps: 30
+    fallback_to_synthetic: true  # No SDK / no device -> labelled synthetic pattern
+  rear:
+    type: "none"                 # or "opencv" with a url
+    url: ""
+    fallback_to_synthetic: false
+```
+
+| `type` | Source |
+| :--- | :--- |
+| `synthetic` | Built-in test pattern |
+| `realsense` | Intel RealSense colour stream via `pyrealsense2` (optional dependency) |
+| `opencv` | RTSP URL, video file, or device index such as `"0"`, set in `url` |
+| `none` | Camera not fitted; the view shows `<NAME> CAMERA OFFLINE` |
+
+Behaviour when hardware is missing:
+
+- **No RealSense SDK or no D456**: with `fallback_to_synthetic: true` the front view shows the
+  synthetic pattern, labelled `SYNTHETIC · D456 UNAVAILABLE`. The real camera is retried each
+  time the stream starts or reconnects.
+- **Rear camera `none`**: the view shows `REAR CAMERA OFFLINE`. The front picture is never
+  shown in its place.
+- **Signal lost mid-stream**: `NO SIGNAL`, then `RECONNECTING`.
+
+The RealSense source reads a camera attached by USB to the machine running this application.
+A camera mounted on the rover has to reach the operator laptop as a network stream (for
+example RTSP via `type: "opencv"`). See [`docs/video_architecture.md`](docs/video_architecture.md).
+
+---
+
+## 7. Developer controls
+
+Hidden by default. Press **F12**, or set `ui.show_dev_controls: true` in
+`config/app_config.yaml`, to show:
+
+- the mission bar: mission phase buttons and clock start / pause / reset;
+- three diagnostics cards in the telemetry strip: Attitude, Sensors and Rover Link.
+
+With the diagnostics cards shown, the telemetry strip is cramped at the 1100 px minimum window
+width. They are intended for use on a wider window.
+
+---
+
+## 8. Tests
 
 ```powershell
 pytest
 ```
 
----
-
-## 6. Video Subsystem Documentation
-
-Comprehensive technical analysis, Jetson GStreamer pipeline commands, streaming comparison matrices, and network specifications are documented in:
-- [`docs/video_architecture.md`](docs/video_architecture.md)
+The suite has **175 tests** and needs no camera hardware, RealSense SDK or ROS 2 installation.
+For a headless run set `QT_QPA_PLATFORM=offscreen`.
 
 ---
 
-## 7. Current Limitations
+## 9. Further documentation
 
-- **Telemetry is MOCK DATA**: No real rover telemetry is connected. Every value in the telemetry strip comes from `MockTelemetryGenerator` running on the operator laptop. Nothing displayed is a measurement of any physical rover.
-- **ROS 2 link**: `ROS2CommsClient` remains an abstraction/stub — it implements the interface and degrades gracefully, but does not yet create a node, publish, or subscribe.
-- **Hardware Camera**: Video is currently operating with the local `TestPatternVideoSource` prototype. Live RTSP streaming from the physical Jetson camera will be connected in subsequent phases.
-- **LiDAR / Map**: Displays a 2D environment map placeholder. 4-LiDAR pointcloud integration will be added in a later phase.
-- **Mission phase is operator-selected**: The phase comes from the development mock controls, not from the rover. There are no transition rules, no automatic progression (other than closing out at `POST-RUN` when the clock expires), and no mission state machine.
-- **E-Stop**: Still toggled from the header button and inferred from the safety badge text; a latching, state-backed safety model is a future phase.
-- **Excavation telemetry**: `ExcavationData` exists in the model but is not populated or displayed.
+- [`docs/architecture.md`](docs/architecture.md): application architecture and data flow.
+- [`docs/video_architecture.md`](docs/video_architecture.md): camera pipeline and the planned
+  rover-side streaming design.
+- [`src/mission_control/comms/ros2/README.md`](src/mission_control/comms/ros2/README.md): the
+  planned ROS 2 topic interface (not implemented).
+
+---
+
+## 10. Current limitations
+
+- All telemetry is mock data; nothing displayed is a measurement.
+- `ROS2CommsClient` is a stub. No commands reach a rover: E-Stop, control mode and drive
+  commands end at the mock client.
+- The RealSense and RTSP camera sources have not been run against real hardware, and no
+  end-to-end video latency has been measured.
+- There is no teleoperation input, heartbeat watchdog or `LOST LINK` detection yet.
+- The mission phase (developer bar) is selected by hand and has no transition rules.

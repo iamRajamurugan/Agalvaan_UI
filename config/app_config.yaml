@@ -13,6 +13,7 @@ ui:
   min_height: 700
   theme: "dark"
   fps_limit: 30
+  show_dev_controls: false  # Developer mission bar + diagnostics cards (F12 toggles at runtime)
 
 telemetry:
   mock_rate_hz: 20        # Mock telemetry publish rate (MOCK DATA ONLY)

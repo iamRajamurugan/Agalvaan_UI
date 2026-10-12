@@ -19,6 +19,8 @@ class UIConfig:
     min_height: int = 700
     theme: str = "dark"
     fps_limit: int = 30
+    # Developer-only mission bar and diagnostics cards (also toggled with F12).
+    show_dev_controls: bool = False
 
 
 @dataclass
@@ -91,6 +93,48 @@ class SensorsConfig:
 
 
 @dataclass
+class CameraSourceConfig:
+    """Where one operator camera feed comes from.
+
+    type: "synthetic" (test pattern), "realsense" (Intel RealSense colour stream),
+          "opencv" (RTSP URL / device index / file via OpenCV), or "none" (offline).
+    """
+    type: str = "none"
+    url: str = ""        # opencv only: RTSP URL, file path, or device index ("0")
+    serial: str = ""     # realsense only: device serial number; empty = first found
+    width: int = 1280
+    height: int = 720
+    fps: int = 30
+    # Show the synthetic pattern (clearly labelled) when the real source is unavailable.
+    fallback_to_synthetic: bool = False
+
+
+def _default_front_camera() -> CameraSourceConfig:
+    return CameraSourceConfig(type="realsense", fallback_to_synthetic=True)
+
+
+@dataclass
+class CamerasConfig:
+    front: CameraSourceConfig = field(default_factory=_default_front_camera)
+    rear: CameraSourceConfig = field(default_factory=CameraSourceConfig)
+
+
+def _load_camera_source(data: Any, default: CameraSourceConfig) -> CameraSourceConfig:
+    """Builds one camera entry from YAML, keeping defaults for anything omitted."""
+    if not isinstance(data, dict):
+        return default
+    return CameraSourceConfig(
+        type=str(data.get("type", default.type)).strip().lower(),
+        url=str(data.get("url", default.url) or ""),
+        serial=str(data.get("serial", default.serial) or ""),
+        width=data.get("width", default.width),
+        height=data.get("height", default.height),
+        fps=data.get("fps", default.fps),
+        fallback_to_synthetic=data.get("fallback_to_synthetic", default.fallback_to_synthetic),
+    )
+
+
+@dataclass
 class RoverConfig:
     name: str = "Lunabotics Rover"
     computer: str = "NVIDIA Jetson Orin Nano"
@@ -101,6 +145,7 @@ class RoverConfig:
     mission_control_ip: str = "192.168.1.50"
     topics: ROSTopicsConfig = field(default_factory=ROSTopicsConfig)
     sensors: SensorsConfig = field(default_factory=SensorsConfig)
+    cameras: CamerasConfig = field(default_factory=CamerasConfig)
 
 
 def load_yaml_file(path: Path) -> Dict[str, Any]:
@@ -139,6 +184,7 @@ def load_app_config(config_dir: Optional[Path] = None) -> AppConfig:
         min_height=ui_section.get("min_height", 700),
         theme=ui_section.get("theme", "dark"),
         fps_limit=ui_section.get("fps_limit", 30),
+        show_dev_controls=ui_section.get("show_dev_controls", False),
     )
 
     mission_config = MissionConfig(
@@ -214,6 +260,15 @@ def load_rover_config(config_dir: Optional[Path] = None) -> RoverConfig:
         camera=camera_config,
     )
 
+    cameras_section = data.get("cameras", {})
+    if not isinstance(cameras_section, dict):
+        cameras_section = {}
+    camera_defaults = CamerasConfig()
+    cameras_config = CamerasConfig(
+        front=_load_camera_source(cameras_section.get("front"), camera_defaults.front),
+        rear=_load_camera_source(cameras_section.get("rear"), camera_defaults.rear),
+    )
+
     return RoverConfig(
         name=rover_section.get("name", "Lunabotics Rover"),
         computer=rover_section.get("computer", "NVIDIA Jetson Orin Nano"),
@@ -224,6 +279,7 @@ def load_rover_config(config_dir: Optional[Path] = None) -> RoverConfig:
         mission_control_ip=network_section.get("mission_control_ip", "192.168.1.50"),
         topics=topics_config,
         sensors=sensors_config,
+        cameras=cameras_config,
     )
 
 

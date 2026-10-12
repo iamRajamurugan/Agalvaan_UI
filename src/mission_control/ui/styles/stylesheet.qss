@@ -62,31 +62,6 @@ QLabel#CardSubtext {
     color: #64748b;
 }
 
-/* Placeholder Frames (Video & Map) */
-QFrame#VideoPlaceholder {
-    background-color: #0a0d13;
-    border: 1px dashed #232b3b;
-    border-radius: 6px;
-}
-
-QFrame#MapPlaceholder {
-    background-color: #0a0d13;
-    border: 1px dashed #232b3b;
-    border-radius: 6px;
-}
-
-QLabel#PlaceholderTitle {
-    font-size: 15px;
-    font-weight: 600;
-    color: #64748b;
-    letter-spacing: 0.5px;
-}
-
-QLabel#PlaceholderSubtitle {
-    font-size: 12px;
-    color: #475569;
-}
-
 /* Badges & Indicators */
 QLabel.Badge {
     padding: 3px 8px;
@@ -157,15 +132,17 @@ QPushButton#PrimaryButton:hover {
     background-color: #0369a1;
 }
 
-/* Emergency Stop Button Placeholder */
+/* Emergency Stop. [engaged="true"] is the latched state: the button then reads
+   HOLD TO RESET and the safety badge reads E-STOP ACTIVE. */
 QPushButton#EStopButton {
     background-color: #dc2626;
-    border: 1px solid #b91c1c;
+    border: 2px solid #fca5a5;
+    border-radius: 4px;
     color: #ffffff;
+    font-size: 15px;
     font-weight: 800;
     letter-spacing: 1px;
-    padding: 8px 18px;
-    border-radius: 4px;
+    padding: 7px 12px;
 }
 
 QPushButton#EStopButton:hover {
@@ -174,6 +151,16 @@ QPushButton#EStopButton:hover {
 
 QPushButton#EStopButton:pressed {
     background-color: #991b1b;
+}
+
+QPushButton#EStopButton[engaged="true"] {
+    background-color: #2b171a;
+    border: 2px solid #dc2626;
+    color: #fca5a5;
+}
+
+QPushButton#EStopButton[engaged="true"]:hover {
+    background-color: #3a1c20;
 }
 
 /* Monospace Values for Timers and Diagnostics */
@@ -210,16 +197,41 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
    MISSION CLOCK, PHASE & DEV CONTROLS (Phase 3B)
    ========================================================================== */
 
-QLabel#MissionClockCaption {
+/* Small captions above header controls (MISSION CLOCK, CONTROL MODE, SAFETY) */
+QLabel#HeaderCaption {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
     color: #7c8ba1;
 }
 
-QLabel#MissionClockCaption[severity="ERROR"] {
+/* MISSION COMPLETE */
+QLabel#HeaderCaption[severity="ERROR"] {
     color: #f87171;
     font-weight: 800;
+}
+
+QPushButton#MissionStartButton {
+    background-color: #0284c7;
+    border: 1px solid #0369a1;
+    border-radius: 4px;
+    padding: 8px 12px;
+    min-width: 76px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    color: #ffffff;
+}
+
+QPushButton#MissionStartButton:hover {
+    background-color: #0369a1;
+}
+
+/* Disabled = the run is under way or over; the label says which */
+QPushButton#MissionStartButton:disabled {
+    background-color: #131720;
+    border-color: #2b3448;
+    color: #7c8ba1;
 }
 
 /* Deliberately the largest text in the window: readable at a glance */
@@ -391,3 +403,286 @@ QLabel#StatusValue[severity="NO_DATA"] { color: #475569; }
 QLabel#CardSubtext[severity="NO_DATA"] { color: #475569; }
 QLabel#CardSubtext[severity="WARNING"] { color: #fbbf24; }
 QLabel#CardSubtext[severity="ERROR"]   { color: #f87171; }
+
+/* ==========================================================================
+   OPERATOR LAYOUT (header controls, camera HUD, terminal)
+   ========================================================================== */
+
+QLabel#SafetyBadge {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    background-color: #122822;
+    color: #34d399;
+    border: 1px solid #065f46;
+}
+
+QLabel#SafetyBadge[severity="ERROR"] {
+    background-color: #dc2626;
+    color: #ffffff;
+    border: 1px solid #ef4444;
+}
+
+/* MANUAL / AUTONOMOUS selector */
+QPushButton#ModeButton {
+    background-color: #171d29;
+    border: 1px solid #2b3448;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    color: #94a3b8;
+}
+
+QPushButton#ModeButton:hover {
+    border-color: #475569;
+    color: #e2e8f0;
+}
+
+QPushButton#ModeButton:checked {
+    background-color: #0284c7;
+    border-color: #38bdf8;
+    color: #ffffff;
+}
+
+QPushButton#ModeButton:disabled {
+    background-color: #131720;
+    border-color: #1e2636;
+    color: #475569;
+}
+
+/* Small segmented selector (FRONT / REAR camera) */
+QPushButton#SegmentButton {
+    background-color: #171d29;
+    border: 1px solid #2b3448;
+    border-radius: 3px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    color: #94a3b8;
+}
+
+QPushButton#SegmentButton:hover {
+    border-color: #475569;
+    color: #e2e8f0;
+}
+
+QPushButton#SegmentButton:checked {
+    background-color: #10243a;
+    border-color: #0ea5e9;
+    color: #38bdf8;
+}
+
+/* Marker detection status in the camera HUD */
+QLabel#MarkerStatus {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    background-color: #1b202b;
+    color: #94a3b8;
+    border: 1px solid #334155;
+}
+
+QLabel#MarkerStatus[severity="NORMAL"] {
+    background-color: #122822;
+    color: #34d399;
+    border-color: #065f46;
+}
+
+QLabel#MarkerStatus[severity="NO_DATA"] { color: #475569; }
+
+/* Which source is feeding the camera view (amber when it is a stand-in) */
+QLabel#VideoSourceLabel {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #708096;
+}
+
+QLabel#VideoSourceLabel[severity="WARNING"] { color: #fbbf24; }
+
+/* Collapsible terminal */
+QFrame#LogConsole {
+    background-color: #0c0f15;
+    border-top: 1px solid #232a38;
+}
+
+QPushButton#LogToggleButton {
+    background-color: transparent;
+    border: none;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: #7c8ba1;
+}
+
+QPushButton#LogToggleButton:hover { color: #e2e8f0; }
+
+QLabel#LogLastMessage {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 11px;
+    color: #708096;
+}
+
+QLabel#LogLastMessage[severity="WARNING"] { color: #fbbf24; }
+QLabel#LogLastMessage[severity="ERROR"]   { color: #f87171; }
+
+QPlainTextEdit#LogView {
+    background-color: #0a0d13;
+    border: none;
+    border-top: 1px solid #1e2636;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 11px;
+    color: #cbd5e1;
+}
+
+/* ==========================================================================
+   NAVIGATION STATE BANNER & ENVIRONMENT CARD
+   ========================================================================== */
+
+QFrame#NavStateBanner {
+    background-color: #10243a;
+    border: 1px solid #0369a1;
+    border-radius: 4px;
+}
+
+QFrame#NavStateBanner[severity="WARNING"] {
+    background-color: #2b2212;
+    border-color: #b45309;
+}
+
+QFrame#NavStateBanner[severity="OFFLINE"],
+QFrame#NavStateBanner[severity="NO_DATA"] {
+    background-color: #1b202b;
+    border-color: #334155;
+}
+
+QLabel#NavStateIcon, QLabel#NavStateValue {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    color: #38bdf8;
+    background-color: transparent;
+}
+
+QLabel#NavStateIcon[severity="WARNING"], QLabel#NavStateValue[severity="WARNING"] { color: #fbbf24; }
+QLabel#NavStateIcon[severity="OFFLINE"], QLabel#NavStateValue[severity="OFFLINE"] { color: #94a3b8; }
+QLabel#NavStateIcon[severity="NO_DATA"], QLabel#NavStateValue[severity="NO_DATA"] { color: #475569; }
+
+/* A card reporting an obstacle is outlined in amber (its text also says so) */
+QFrame#TelemetryCard[severity="WARNING"] {
+    border-color: #b45309;
+}
+
+/* ==========================================================================
+   CAMERA PLAYER HUD
+   ========================================================================== */
+
+QWidget#VideoTopHUD {
+    background-color: #0e121a;
+    border-bottom: 1px solid #232a38;
+}
+
+QWidget#VideoBottomHUD {
+    background-color: #0e121a;
+    border-top: 1px solid #232a38;
+}
+
+QLabel#LiveBadge {
+    background-color: #dc2626;
+    color: #ffffff;
+    border: 1px solid #ef4444;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+}
+
+/* Stream state while not live: CONNECTING / RECONNECTING / OFFLINE / ... */
+QLabel#StreamStateBadge {
+    background-color: #1b202b;
+    color: #94a3b8;
+    border: 1px solid #334155;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+}
+
+QLabel#StreamStateBadge[severity="WARNING"] {
+    background-color: #2b2212;
+    color: #fbbf24;
+    border-color: #78350f;
+}
+
+QLabel#StreamStateBadge[severity="ERROR"] {
+    background-color: #2b171a;
+    color: #f87171;
+    border-color: #7f1d1d;
+}
+
+QLabel#VideoResolution {
+    background-color: #1e2638;
+    color: #38bdf8;
+    border: 1px solid #0369a1;
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QLabel#VideoTitle {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #e2e8f0;
+}
+
+QLabel#VideoStat {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: #38bdf8;
+}
+
+QPushButton#StreamButton, QPushButton#HudButton {
+    border-radius: 3px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QPushButton#StreamButton {
+    background-color: #0284c7;
+    border: 1px solid #0369a1;
+    color: #ffffff;
+}
+
+QPushButton#StreamButton:hover {
+    background-color: #0369a1;
+}
+
+QPushButton#StreamButton[active="true"] {
+    background-color: #991b1b;
+    border-color: #b91c1c;
+}
+
+QPushButton#StreamButton[active="true"]:hover {
+    background-color: #7f1d1d;
+}
+
+QPushButton#StreamButton:disabled {
+    background-color: #131720;
+    border-color: #1e2636;
+    color: #475569;
+}

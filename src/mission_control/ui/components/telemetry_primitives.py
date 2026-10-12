@@ -45,6 +45,24 @@ def apply_severity(widget: QWidget, severity: Severity) -> None:
     style.polish(widget)
 
 
+class ElidedLabel(QLabel):
+    """Label that shortens its text with an ellipsis instead of clipping it."""
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self._full_text = text
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def full_text(self) -> str:
+        return self._full_text
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        elided = self.fontMetrics().elidedText(self._full_text, Qt.ElideRight, self.width())
+        if elided != self.text():
+            super().setText(elided)
+
+
 class TelemetryCard(QFrame):
     """Compact titled container used for each telemetry section."""
 
@@ -72,6 +90,16 @@ class TelemetryCard(QFrame):
         """Appends a row widget to the card body and returns it."""
         self.body_layout.addWidget(widget)
         return widget
+
+    def add_row_pair(self, left: QWidget, right: QWidget) -> tuple[QWidget, QWidget]:
+        """Appends two rows side by side on one line, keeping dense cards short."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(16)
+        row.addWidget(left, stretch=1)
+        row.addWidget(right, stretch=1)
+        self.body_layout.addLayout(row)
+        return left, right
 
 
 class MetricRow(QWidget):

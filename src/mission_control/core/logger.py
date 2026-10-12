@@ -2,7 +2,7 @@
 
 import logging
 import sys
-from typing import Optional
+from typing import Callable, Optional
 
 _DEFAULT_FORMAT = "[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s"
 _DATE_FORMAT = "%H:%M:%S"
@@ -44,3 +44,18 @@ def setup_logger(
 def get_logger(module_name: str) -> logging.Logger:
     """Returns a child logger scoped to the specified module name."""
     return logging.getLogger(f"mission_control.{module_name}")
+
+
+class CallbackLogHandler(logging.Handler):
+    """Forwards log records as (level, message) to a callback, e.g. an EventBus signal."""
+
+    def __init__(self, callback: Callable[[str, str], None], level: int = logging.INFO):
+        super().__init__(level)
+        self._callback = callback
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            source = record.name.removeprefix("mission_control.")
+            self._callback(record.levelname, f"[{source}] {record.getMessage()}")
+        except Exception:
+            self.handleError(record)
